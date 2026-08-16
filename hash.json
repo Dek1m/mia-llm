@@ -1,10 +1,22 @@
 {
-  "version": "0.1.0",
+  "version": "1.0.0",
   "files": {
-    "__init__.py": "3c74a858d0784c66f1e6b4e8612fab8674f3e97c762e3d863ab614a7d00da904",
-    "config.py": "8992464d43b1e0a79a6dd5c9f4e96cef0b97ffec7da87d7f3c2b74629dadd182",
-    "models.py": "b19a1509f0a82d2461b153e408ef80a2acf9ecc8576182213d5f0a18563fb75c",
-    "provider.py": "9ec426adc29a1ca2a4f5d0b5d3ff321de990927780f6b1fd4d3a2ad9618de1f2"
+    "__init__.py": "77c361efee33372dbbd4865f744d0436cfaec9e9df62af47e00df0bc5373cf74",
+    "config.py": "1d26709c8f7b683116a8c5dc756387ccdd337ec38838e6e153bad26215f2c64d",
+    "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
+    "provider.py": "ace4747b5aebabca66eba790beab3fa198a69cddce524b16502a3779b4b1936a",
+    "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
+    "providers/base.py": "ea6afe742d6d786aab1db2033192ec27e56f068c461c0494e876b5a121d3ccda",
+    "providers/openai.py": "0fe5e9fa1fc9178eb27434f2a3b5288333b0a04c945482a4c1ab0e352a1b9e52",
+    "providers/registry.py": "f94bc33461cc08a03f08294f8b801e2246d14a8a13725cef7f40b0ac1ef7c899",
+    "repository.py": "a816ace2d6cfaa8c04dcce541092ee9b805fb81061d4381727fbd54b919037d1",
+    "schema.py": "33f0e109868d487c321fc95e33bd9d246778f4abe52fb05093753964121c133e",
+    "schemas.py": "cdad1fe50853de3cfe82318ce37e4b292e64c2abe8326880182cb196a0359b5f",
+    "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tests/conftest.py": "85996792c722c4cad3967fec4e81f3cecdb0753120e1cc72f95b8c972d2e6f51",
+    "tests/test_agents.py": "c2e344f7e384b72df1254fa60297d271070332da6b5f0df4f3402b7f732ca40e",
+    "tests/test_provider.py": "3f213627622c25f8367fe50ce33316aa671d18c90363e3b43c7393aa04e5516f",
+    "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "012fc588973f243abd708b32ef1fb8321ed22d3119c0e265de9090e77ee6eccd"
+  "manifest_hash": "419be2cd01b671d38d241144e4f872b012d13a5aaceddcea364c52297fdd2f5e"
 }

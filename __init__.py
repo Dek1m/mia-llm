@@ -1,6 +1,6 @@
 """LLM Module — модуль LLM для Mia Framework.
 
-Абстракция над провайдерами + agent definitions.
+Абстракция над провайдерами + управление определениями агентов.
 
 Использование:
     app.load_module("llm")
@@ -10,19 +10,21 @@
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from modules_system.module_base import ModuleBase
 
 from .config import LLMConfig
 from .provider import LLMProvider
-from .models import AgentDefinition, ChatMessage, ChatResponse, StreamChunk
+from .models import AgentDefinition, AgentInfo, ChatMessage, ChatResponse, StreamChunk
 
 __all__ = [
     "LLMModule",
     "LLMProvider",
     "LLMConfig",
     "AgentDefinition",
+    "AgentInfo",
     "ChatMessage",
     "ChatResponse",
     "StreamChunk",
@@ -32,7 +34,7 @@ from argenta_logging import get_logger
 
 log = get_logger(__name__)
 
-MODULE_VERSION = "0.1.0"
+MODULE_VERSION = "1.0.0"
 
 
 class LLMModule(ModuleBase):
@@ -40,8 +42,9 @@ class LLMModule(ModuleBase):
 
     Предоставляет:
     - Единый интерфейс chat / chat_stream
-    - Регистрацию и использование agent definitions
-    - Интеграцию с Task System
+    - Управление агентами (CRUD в БД)
+    - Провайдеры с fallback
+    - Регистрацию AUTH_SCHEMA и DB-схемы
     """
 
     @property
@@ -57,20 +60,30 @@ class LLMModule(ModuleBase):
         self._provider: LLMProvider | None = None
 
     def on_load(self, state: Any) -> None:
+        """Инициализация модуля: провайдеры → БД → AUTH_SCHEMA → DI."""
         self._provider = LLMProvider(self._config)
 
         try:
             if hasattr(state, "services") and hasattr(state.services, "register"):
                 state.services.register(LLMProvider, self._provider)
-                log.info("LLMProvider registered in DI")
         except Exception as exc:
             log.warning("failed_to_register_llm_provider", error=str(exc))
+
+        # Инициализация БД + AUTH_SCHEMA (идемпотентно)
+        async def _init_llm() -> None:
+            await self._provider.initialize(state)
+
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            asyncio.ensure_future(_init_llm())
+        else:
+            loop.run_until_complete(_init_llm())
 
         log.info(
             "llm_module_loaded",
             version=self.version,
-            provider=self._config.default_provider,
-            model=self._config.default_model,
+            default_provider=self._config.default_provider,
+            providers=list(self._provider.provider_registry.list_providers()),
         )
 
     def on_unload(self) -> None:

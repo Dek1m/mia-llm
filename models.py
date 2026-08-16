@@ -9,6 +9,7 @@ from uuid import uuid4
 
 @dataclass
 class AgentDefinition:
+    """Определение агента (in-memory, для registry LLMProvider)."""
     id: str
     name: str
     system_prompt: str
@@ -18,6 +19,23 @@ class AgentDefinition:
     tools: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+@dataclass
+class AgentInfo:
+    """Информация об агенте (из БД, для API-ответов)."""
+    id: str
+    name: str
+    agent_type: str
+    description: str | None = None
+    system_prompt: str | None = None
+    model: str | None = None
+    settings: dict[str, Any] = field(default_factory=dict)
+    workspace_id: str | None = None
+    owner_id: str | None = None
+    is_active: bool = True
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
 
 @dataclass

@@ -1,232 +1,311 @@
-"""LLM Provider — абстракция над LLM-бэкендами и agent definitions."""
+"""LLM Provider — основной провайдер модуля LLM.
+
+Интеграция с БД (агенты), провайдерами (chat), auth (permissions).
+"""
 from __future__ import annotations
 
-import threading
-from typing import Any, Iterator
-from uuid import uuid4
+from typing import Any
 
 from argenta_logging import get_logger
-
-try:
-    from core.task_decorator import task
-except ImportError:
-    def task(**kwargs):  # type: ignore
-        def deco(fn):
-            return fn
-        return deco
+from core.task_decorator import task
+from modules.auth.decorators import auth_method
 
 from .config import LLMConfig
-from .models import AgentDefinition, ChatMessage, ChatResponse, StreamChunk
+from .repository import LLMRepository
+from .schema import LLM_SCHEMA
+from .schemas import DB_SCHEMA
+from .models import AgentInfo
+from .providers.base import BaseProvider
+from .providers.openai import OpenAIProvider
+from .providers.registry import ProviderRegistry
 
 log = get_logger(__name__)
 
 __all__ = ["LLMProvider"]
 
 
+class LLMError(Exception):
+    """Базовая ошибка LLM-модуля."""
+
+    def __init__(self, message: str, code: str = "LLM_ERROR") -> None:
+        self.code = code
+        super().__init__(message)
+
+
+class NotFoundError(LLMError):
+    def __init__(self, entity: str = "Resource") -> None:
+        super().__init__(f"{entity} not found", "NOT_FOUND")
+
+
+class ForbiddenError(LLMError):
+    def __init__(self, message: str = "Forbidden") -> None:
+        super().__init__(message, "FORBIDDEN")
+
+
 class LLMProvider:
+    """Провайдер LLM.
+
+    Предоставляет:
+    - Вызов LLM через провайдеры с fallback
+    - Управление агентами (CRUD в БД)
+    - Просмотр провайдеров и моделей
+    """
+
     def __init__(self, config: LLMConfig) -> None:
         self._config = config
-        self._agents: dict[str, AgentDefinition] = {}
-        self._lock = threading.RLock()
+        self._repo: LLMRepository | None = None
+        self._provider_registry = ProviderRegistry()
+        self._init_providers()
 
-    @task(type="io", timeout=5.0)
-    def register_agent(
-        self,
-        agent_id: str,
-        name: str,
-        system_prompt: str,
-        model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        tools: list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
-    ) -> AgentDefinition:
-        agent = AgentDefinition(
-            id=agent_id,
-            name=name,
-            system_prompt=system_prompt,
-            model=model or self._config.default_model,
-            temperature=temperature if temperature is not None else self._config.default_temperature,
-            max_tokens=max_tokens or self._config.default_max_tokens,
-            tools=tools or [],
-            metadata=metadata or {},
+    def _init_providers(self) -> None:
+        """Создать и зарегистрировать провайдеры из конфига."""
+        for name, pcfg in self._config.providers.items():
+            provider = OpenAIProvider(
+                name=name,
+                base_url=pcfg.base_url,
+                api_key=pcfg.api_key,
+                default_model=pcfg.default_model,
+                timeout=pcfg.timeout,
+            )
+            self._provider_registry.register(name, provider)
+
+        if self._config.default_provider:
+            self._provider_registry.set_default(self._config.default_provider)
+        if self._config.fallback_provider:
+            self._provider_registry.set_fallback(self._config.fallback_provider)
+
+    @property
+    def repository(self) -> LLMRepository | None:
+        return self._repo
+
+    @property
+    def provider_registry(self) -> ProviderRegistry:
+        return self._provider_registry
+
+    async def initialize(self, state: Any) -> None:
+        """Регистрация БД-схемы и AUTH_SCHEMA."""
+        # Регистрация БД-схемы
+        from modules.db.provider import DatabaseProvider
+
+        db_provider = state.services.resolve(DatabaseProvider)
+        self._repo = LLMRepository(db_provider.pool)
+
+        await db_provider.register_schema(
+            "llm",
+            DB_SCHEMA,
+            schema_name="llm",
+            ddl_dir="ddl",
         )
-        with self._lock:
-            self._agents[agent_id] = agent
-        log.info("agent_registered", agent_id=agent_id, name=name)
-        return agent
 
-    @task(type="io", timeout=5.0)
-    def get_agent(self, agent_id: str) -> AgentDefinition | None:
-        with self._lock:
-            return self._agents.get(agent_id)
+        # Регистрация AUTH_SCHEMA
+        from modules.auth.schema_registry import AuthSchemaRegistry
 
-    @task(type="io", timeout=5.0)
-    def list_agents(self) -> list[AgentDefinition]:
-        with self._lock:
-            return list(self._agents.values())
+        auth_registry = state.services.resolve(AuthSchemaRegistry)
+        await auth_registry.register("llm", LLM_SCHEMA, is_builtin=False)
 
-    @task(type="io", timeout=5.0)
-    def unregister_agent(self, agent_id: str) -> bool:
-        with self._lock:
-            return self._agents.pop(agent_id, None) is not None
+        # Сид системных агентов
+        await self._repo.seed_system_agents()
 
-    @task(type="network", timeout=120.0, retry=1)
-    def chat(
+        log.info("LLM schema registered, system agents seeded")
+
+    # ── Chat ────────────────────────────────────────────
+
+    @task(type="network", timeout=120.0)
+    @auth_method(
+        name="chat",
+        description="Вызов LLM через chat completions",
+        args={"messages": "list", "model": "str", "provider": "str"},
+        return_type="dict",
+        public=False,
+        required_permission="llm:chat",
+    )
+    async def chat(
         self,
-        messages: list[dict[str, Any] | ChatMessage],
+        messages: list[dict[str, Any]],
         model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        tools: list[dict] | None = None,
-        tool_choice: str | dict | None = None,
+        provider: str | None = None,
         **kwargs: Any,
-    ) -> ChatResponse:
-        normalized = self._normalize_messages(messages)
-        model = model or self._config.default_model
-        temperature = temperature if temperature is not None else self._config.default_temperature
-        max_tokens = max_tokens or self._config.default_max_tokens
-
-        if self._config.default_provider == "mock":
-            return self._mock_chat(normalized, model)
-
-        return self._openai_compatible_chat(
-            messages=normalized,
+    ) -> dict[str, Any]:
+        """Вызвать LLM через провайдер с fallback."""
+        return await self._provider_registry.chat_with_fallback(
+            messages=messages,
             model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            tools=tools,
-            tool_choice=tool_choice,
-            stream=False,
             **kwargs,
         )
 
     @task(type="network", timeout=120.0)
-    def chat_stream(
+    @auth_method(
+        name="chat_stream",
+        description="Потоковый вывод LLM (пока синхронный обёртка)",
+        args={"messages": "list", "model": "str"},
+        return_type="dict",
+        public=False,
+        required_permission="llm:chat_stream",
+    )
+    async def chat_stream(
         self,
-        messages: list[dict[str, Any] | ChatMessage],
+        messages: list[dict[str, Any]],
         model: str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
         **kwargs: Any,
-    ) -> Iterator[StreamChunk]:
-        normalized = self._normalize_messages(messages)
-        model = model or self._config.default_model
-        temperature = temperature if temperature is not None else self._config.default_temperature
-        max_tokens = max_tokens or self._config.default_max_tokens
+    ) -> dict[str, Any]:
+        """Потоковый chat (заготовка — в первой итерации просто chat)."""
+        return await self.chat(messages=messages, model=model, **kwargs)
 
-        if self._config.default_provider == "mock":
-            yield from self._mock_stream(normalized, model)
-            return
+    # ── Agents ──────────────────────────────────────────
 
-        resp = self._openai_compatible_chat(
-            messages=normalized,
-            model=model,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            stream=False,
-            **kwargs,
-        )
-        yield StreamChunk(delta=resp.content or "", finish_reason=resp.finish_reason)
-
-    @task(type="network", timeout=120.0, retry=1)
-    def chat_as_agent(
+    @task(type="database", timeout=5.0)
+    @auth_method(
+        name="agents",
+        description="Список всех агентов (системные + пользовательские + workspace)",
+        args={"agent_type": "str", "workspace_id": "str", "offset": "int", "limit": "int"},
+        return_type="dict",
+        public=False,
+        required_permission="llm:agent_list",
+    )
+    async def agents(
         self,
-        agent_id: str,
-        messages: list[dict[str, Any] | ChatMessage],
-        **overrides: Any,
-    ) -> ChatResponse:
-        agent = self.get_agent(agent_id)
-        if not agent:
-            raise ValueError(f"Agent not found: {agent_id}")
-
-        system = {"role": "system", "content": agent.system_prompt}
-        full_messages = [system] + self._normalize_messages(messages)
-
-        return self.chat(
-            messages=full_messages,
-            model=overrides.get("model") or agent.model,
-            temperature=overrides.get("temperature") if "temperature" in overrides else agent.temperature,
-            max_tokens=overrides.get("max_tokens") or agent.max_tokens,
-            tools=overrides.get("tools"),
+        agent_type: str | None = None,
+        workspace_id: str | None = None,
+        offset: int = 0,
+        limit: int = 100,
+    ) -> dict[str, Any]:
+        """Получить список агентов."""
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        items, total = await self._repo.list_agents(
+            agent_type=agent_type, workspace_id=workspace_id,
+            offset=offset, limit=limit,
         )
+        return {"items": items, "total": total, "offset": offset, "limit": limit}
 
-    def _normalize_messages(
-        self, messages: list[dict[str, Any] | ChatMessage]
-    ) -> list[dict[str, Any]]:
-        result = []
-        for m in messages:
-            if isinstance(m, ChatMessage):
-                d: dict[str, Any] = {"role": m.role}
-                if m.content is not None:
-                    d["content"] = m.content
-                if m.name:
-                    d["name"] = m.name
-                if m.tool_calls:
-                    d["tool_calls"] = m.tool_calls
-                if m.tool_call_id:
-                    d["tool_call_id"] = m.tool_call_id
-                result.append(d)
-            else:
-                result.append(dict(m))
+    @task(type="database", timeout=5.0)
+    @auth_method(
+        name="agent",
+        description="Получить информацию об агенте",
+        args={"agent_id": "str"},
+        return_type="dict",
+        public=False,
+        required_permission="llm:agent_list",
+    )
+    async def agent(self, agent_id: str) -> dict[str, Any]:
+        """Получить агента по ID."""
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        row = await self._repo.get_agent(agent_id)
+        if not row:
+            raise NotFoundError("Agent")
+        return row
+
+    @task(type="database", timeout=5.0)
+    @auth_method(
+        name="create_agent",
+        description="Создать нового агента (пользовательский/workspace)",
+        args={
+            "name": "str", "agent_type": "str", "description": "str",
+            "system_prompt": "str", "model": "str", "workspace_id": "str",
+        },
+        return_type="dict",
+        public=False,
+        required_permission="llm:agent_manage",
+    )
+    async def create_agent(
+        self,
+        name: str,
+        agent_type: str = "user",
+        description: str | None = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        workspace_id: str | None = None,
+        owner_id: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Создать агента."""
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+
+        if agent_type == "system":
+            raise ForbiddenError("Cannot create system agents manually")
+
+        row = await self._repo.create_agent(
+            name=name,
+            agent_type=agent_type,
+            description=description,
+            system_prompt=system_prompt,
+            model=model,
+            workspace_id=workspace_id,
+            owner_id=owner_id,
+        )
+        return row
+
+    @task(type="database", timeout=5.0)
+    @auth_method(
+        name="update_agent",
+        description="Обновить агента",
+        args={"agent_id": "str", "data": "dict"},
+        return_type="dict",
+        public=False,
+        required_permission="llm:agent_manage",
+    )
+    async def update_agent(self, agent_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Обновить агента."""
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+
+        # Проверяем, не system ли агент
+        row = await self._repo.get_agent(agent_id)
+        if not row:
+            raise NotFoundError("Agent")
+        if row.get("agent_type") == "system":
+            raise ForbiddenError("Cannot modify system agents")
+
+        result = await self._repo.update_agent(agent_id, data)
+        if not result:
+            raise NotFoundError("Agent")
         return result
 
-    def _mock_chat(self, messages: list[dict], model: str) -> ChatResponse:
-        last = next((m["content"] for m in reversed(messages) if m.get("content")), "")
-        return ChatResponse(
-            id=f"mock-{uuid4()}",
-            content=f"[mock:{model}] Echo: {last[:200]}",
-            model=model,
-            finish_reason="stop",
-            usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        )
+    @task(type="database", timeout=5.0)
+    @auth_method(
+        name="delete_agent",
+        description="Удалить агента",
+        args={"agent_id": "str"},
+        return_type="bool",
+        public=False,
+        required_permission="llm:agent_manage",
+    )
+    async def delete_agent(self, agent_id: str) -> bool:
+        """Удалить агента."""
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
 
-    def _mock_stream(self, messages: list[dict], model: str) -> Iterator[StreamChunk]:
-        resp = self._mock_chat(messages, model)
-        text = resp.content or ""
-        for i in range(0, len(text), 12):
-            yield StreamChunk(delta=text[i : i + 12])
-        yield StreamChunk(delta="", finish_reason="stop")
+        row = await self._repo.get_agent(agent_id)
+        if not row:
+            raise NotFoundError("Agent")
+        if row.get("agent_type") == "system":
+            raise ForbiddenError("Cannot delete system agents")
 
-    def _openai_compatible_chat(
-        self,
-        messages: list[dict],
-        model: str,
-        temperature: float,
-        max_tokens: int,
-        tools: list[dict] | None = None,
-        tool_choice: str | dict | None = None,
-        stream: bool = False,
-        **kwargs: Any,
-    ) -> ChatResponse:
-        try:
-            import httpx
-        except ImportError:
-            log.warning("httpx not installed, falling back to mock")
-            return self._mock_chat(messages, model)
+        return await self._repo.delete_agent(agent_id)
 
-        payload: dict[str, Any] = {
-            "model": model,
-            "messages": messages,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-            "stream": stream,
-        }
-        if tools:
-            payload["tools"] = tools
-        if tool_choice is not None:
-            payload["tool_choice"] = tool_choice
-        payload.update(kwargs)
+    # ── Providers ───────────────────────────────────────
 
-        headers = {"Content-Type": "application/json"}
-        if self._config.api_key:
-            headers["Authorization"] = f"Bearer {self._config.api_key}"
-
-        url = self._config.base_url.rstrip("/") + "/chat/completions"
-
-        with httpx.Client(timeout=self._config.timeout) as client:
-            resp = client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-
-        return ChatResponse.from_openai(data)
+    @task(type="io", timeout=5.0)
+    @auth_method(
+        name="get_providers",
+        description="Список зарегистрированных LLM-провайдеров и их статус",
+        args={},
+        return_type="list",
+        public=False,
+        required_permission="llm:config",
+    )
+    async def get_providers(self) -> list[dict[str, Any]]:
+        """Получить список провайдеров с health-check."""
+        providers = self._provider_registry.list_providers()
+        for p in providers:
+            prov = self._provider_registry.get(p["name"])
+            if prov:
+                try:
+                    p["healthy"] = await prov.health()
+                except Exception:
+                    p["healthy"] = False
+            else:
+                p["healthy"] = False
+        return providers
