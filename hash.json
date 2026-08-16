@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "files": {
+    "__init__.py": "3c74a858d0784c66f1e6b4e8612fab8674f3e97c762e3d863ab614a7d00da904",
+    "config.py": "8992464d43b1e0a79a6dd5c9f4e96cef0b97ffec7da87d7f3c2b74629dadd182",
+    "models.py": "b19a1509f0a82d2461b153e408ef80a2acf9ecc8576182213d5f0a18563fb75c",
+    "provider.py": "9ec426adc29a1ca2a4f5d0b5d3ff321de990927780f6b1fd4d3a2ad9618de1f2"
+  },
+  "manifest_hash": "012fc588973f243abd708b32ef1fb8321ed22d3119c0e265de9090e77ee6eccd"
+}
