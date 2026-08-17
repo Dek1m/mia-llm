@@ -1,10 +1,10 @@
 {
   "version": "1.0.0",
   "files": {
-    "__init__.py": "77c361efee33372dbbd4865f744d0436cfaec9e9df62af47e00df0bc5373cf74",
+    "__init__.py": "b84d0ce1ecd9a2643e23cb032c8e797c50d6d67325c734d9342508cf5b066b35",
     "config.py": "1d26709c8f7b683116a8c5dc756387ccdd337ec38838e6e153bad26215f2c64d",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
-    "provider.py": "ace4747b5aebabca66eba790beab3fa198a69cddce524b16502a3779b4b1936a",
+    "provider.py": "2485edcbb3615419a8debd85dd27c3afdfc531830f74765de24990a483bd9ee8",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "ea6afe742d6d786aab1db2033192ec27e56f068c461c0494e876b5a121d3ccda",
     "providers/openai.py": "0fe5e9fa1fc9178eb27434f2a3b5288333b0a04c945482a4c1ab0e352a1b9e52",
@@ -18,5 +18,5 @@
     "tests/test_provider.py": "3f213627622c25f8367fe50ce33316aa671d18c90363e3b43c7393aa04e5516f",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "419be2cd01b671d38d241144e4f872b012d13a5aaceddcea364c52297fdd2f5e"
+  "manifest_hash": "6ac6a7a8f10a38e39b1ba52c009690ee8f844a3d8a20b2771cec1da4f63cbec4"
 }

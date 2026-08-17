@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Any
 
 from argenta_logging import get_logger
-from core.task_decorator import task
 from modules.auth.decorators import auth_method
 
 from .config import LLMConfig
@@ -110,7 +109,6 @@ class LLMProvider:
 
     # ── Chat ────────────────────────────────────────────
 
-    @task(type="network", timeout=120.0)
     @auth_method(
         name="chat",
         description="Вызов LLM через chat completions",
@@ -133,7 +131,6 @@ class LLMProvider:
             **kwargs,
         )
 
-    @task(type="network", timeout=120.0)
     @auth_method(
         name="chat_stream",
         description="Потоковый вывод LLM (пока синхронный обёртка)",
@@ -153,7 +150,6 @@ class LLMProvider:
 
     # ── Agents ──────────────────────────────────────────
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="agents",
         description="Список всех агентов (системные + пользовательские + workspace)",
@@ -178,7 +174,6 @@ class LLMProvider:
         )
         return {"items": items, "total": total, "offset": offset, "limit": limit}
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="agent",
         description="Получить информацию об агенте",
@@ -196,7 +191,6 @@ class LLMProvider:
             raise NotFoundError("Agent")
         return row
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="create_agent",
         description="Создать нового агента (пользовательский/workspace)",
@@ -237,7 +231,6 @@ class LLMProvider:
         )
         return row
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="update_agent",
         description="Обновить агента",
@@ -263,7 +256,6 @@ class LLMProvider:
             raise NotFoundError("Agent")
         return result
 
-    @task(type="database", timeout=5.0)
     @auth_method(
         name="delete_agent",
         description="Удалить агента",
@@ -287,7 +279,6 @@ class LLMProvider:
 
     # ── Providers ───────────────────────────────────────
 
-    @task(type="io", timeout=5.0)
     @auth_method(
         name="get_providers",
         description="Список зарегистрированных LLM-провайдеров и их статус",

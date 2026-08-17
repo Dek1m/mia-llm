@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from modules_system.module_base import ModuleBase
+from modules_system.module_base import ModuleBase, ModuleMeta
 
 from .config import LLMConfig
 from .provider import LLMProvider
@@ -54,6 +54,13 @@ class LLMModule(ModuleBase):
     @property
     def version(self) -> str:
         return MODULE_VERSION
+
+    @property
+    def meta(self) -> ModuleMeta:
+        return ModuleMeta(
+            cache_rules={"get_providers": 300},
+            timeout_defaults={"chat": 120.0, "create_agent": 10.0},
+        )
 
     def __init__(self, config: LLMConfig | None = None) -> None:
         self._config = config or LLMConfig.from_env()
