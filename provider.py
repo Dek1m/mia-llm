@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from argenta_logging import get_logger
+
 from modules.auth.decorators import auth_method
 
 from .config import LLMConfig
@@ -18,7 +18,6 @@ from .providers.base import BaseProvider
 from .providers.openai import OpenAIProvider
 from .providers.registry import ProviderRegistry
 
-log = get_logger(__name__)
 
 __all__ = ["LLMProvider"]
 
@@ -50,8 +49,9 @@ class LLMProvider:
     - Просмотр провайдеров и моделей
     """
 
-    def __init__(self, config: LLMConfig) -> None:
+    def __init__(self, config: LLMConfig, log: Any = None) -> None:
         self._config = config
+        self._log = log
         self._repo: LLMRepository | None = None
         self._provider_registry = ProviderRegistry()
         self._init_providers()
@@ -105,7 +105,7 @@ class LLMProvider:
         # Сид системных агентов
         await self._repo.seed_system_agents()
 
-        log.info("LLM schema registered, system agents seeded")
+        self._log.info("LLM schema registered, system agents seeded")
 
     # ── Chat ────────────────────────────────────────────
 

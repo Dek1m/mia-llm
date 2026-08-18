@@ -69,7 +69,7 @@ class LLMModule(ModuleBase):
 
     def on_load(self, state: Any) -> None:
         """Инициализация модуля: провайдеры → БД → AUTH_SCHEMA → DI."""
-        self._provider = LLMProvider(self._config)
+        self._provider = LLMProvider(self._config, log=state.log)
 
         try:
             if hasattr(state, "services") and hasattr(state.services, "register"):
