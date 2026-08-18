@@ -58,6 +58,7 @@ class LLMModule(ModuleBase):
     @property
     def meta(self) -> ModuleMeta:
         return ModuleMeta(
+            dependencies=["log", "db"],
             cache_rules={"get_providers": 300},
             timeout_defaults={"chat": 120.0, "create_agent": 10.0},
         )
