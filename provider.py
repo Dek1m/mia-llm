@@ -8,6 +8,7 @@ from typing import Any
 
 
 from modules.auth.decorators import auth_method
+from core.task_decorator import task
 
 from .config import LLMConfig
 from .repository import LLMRepository
@@ -82,6 +83,7 @@ class LLMProvider:
     def provider_registry(self) -> ProviderRegistry:
         return self._provider_registry
 
+    @task(type="database")
     async def initialize(self, state: Any) -> None:
         """Регистрация БД-схемы и AUTH_SCHEMA."""
         # Регистрация БД-схемы
@@ -118,6 +120,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:chat",
     )
+    @task(type="network")
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -140,6 +143,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:chat_stream",
     )
+    @task(type="network")
     async def chat_stream(
         self,
         messages: list[dict[str, Any]],
@@ -159,6 +163,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:agent_list",
     )
+    @task(type="database")
     async def agents(
         self,
         agent_type: str | None = None,
@@ -183,6 +188,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:agent_list",
     )
+    @task(type="database")
     async def agent(self, agent_id: str) -> dict[str, Any]:
         """Получить агента по ID."""
         if self._repo is None:
@@ -203,6 +209,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:agent_manage",
     )
+    @task(type="database")
     async def create_agent(
         self,
         name: str,
@@ -240,6 +247,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:agent_manage",
     )
+    @task(type="database")
     async def update_agent(self, agent_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """Обновить агента."""
         if self._repo is None:
@@ -265,6 +273,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:agent_manage",
     )
+    @task(type="database")
     async def delete_agent(self, agent_id: str) -> bool:
         """Удалить агента."""
         if self._repo is None:
@@ -288,6 +297,7 @@ class LLMProvider:
         public=False,
         required_permission="llm:config",
     )
+    @task(type="cpu")
     async def get_providers(self) -> list[dict[str, Any]]:
         """Получить список провайдеров с health-check."""
         providers = self._provider_registry.list_providers()
