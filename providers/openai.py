@@ -3,11 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from argenta_logging import get_logger
-
 from .base import BaseProvider
-
-log = get_logger(__name__)
 
 __all__ = ["OpenAIProvider"]
 
@@ -25,9 +21,10 @@ class OpenAIProvider(BaseProvider):
         api_key: str = "",
         default_model: str = "gpt-4o-mini",
         timeout: float = 120.0,
+        log: Any | None = None,
         **kwargs: Any,
     ) -> None:
-        super().__init__(name=name, config=kwargs)
+        super().__init__(name=name, config=kwargs, log=log)
         self._base_url = base_url.rstrip("/")
         self._api_key = api_key
         self._default_model = default_model
@@ -100,7 +97,8 @@ class OpenAIProvider(BaseProvider):
                 data = resp.json()
                 return [m.get("id", "") for m in data.get("data", [])]
         except Exception as e:
-            log.warning("Failed to list models", extra={"error": str(e)})
+            if self._log is not None:
+                self._log.warning("Failed to list models", extra={"error": str(e)})
             return []
 
     async def health(self) -> bool:

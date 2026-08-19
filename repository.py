@@ -3,18 +3,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from argenta_logging import get_logger
-
-log = get_logger(__name__)
-
 __all__ = ["LLMRepository"]
 
 
 class LLMRepository:
     """Репозиторий для агентов LLM."""
 
-    def __init__(self, pool: Any) -> None:
+    def __init__(self, pool: Any, log: Any | None = None) -> None:
         self._pool = pool
+        self._log = log
 
     # ── Agents CRUD ─────────────────────────────────────
 
@@ -178,7 +175,8 @@ class LLMRepository:
             settings={"temperature": 0.5, "max_tokens": 2048},
         )
 
-        log.info("System agents seeded (build, plan)")
+        if self._log is not None:
+            self._log.info("System agents seeded (build, plan)")
 
     async def count_agents_by_type(self, agent_type: str) -> int:
         result = await self._pool.fetchval(

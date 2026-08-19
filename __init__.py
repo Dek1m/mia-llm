@@ -30,10 +30,6 @@ __all__ = [
     "StreamChunk",
 ]
 
-from argenta_logging import get_logger
-
-log = get_logger(__name__)
-
 MODULE_VERSION = "1.0.0"
 
 
@@ -66,16 +62,18 @@ class LLMModule(ModuleBase):
     def __init__(self, config: LLMConfig | None = None) -> None:
         self._config = config or LLMConfig.from_env()
         self._provider: LLMProvider | None = None
+        self._log = None
 
     def on_load(self, state: Any) -> None:
         """Инициализация модуля: провайдеры → БД → AUTH_SCHEMA → DI."""
-        self._provider = LLMProvider(self._config, log=state.log)
+        self._log = state.log
+        self._provider = LLMProvider(self._config, log=self._log)
 
         try:
             if hasattr(state, "services") and hasattr(state.services, "register"):
                 state.services.register(LLMProvider, self._provider)
         except Exception as exc:
-            log.warning("failed_to_register_llm_provider", error=str(exc))
+            self._log.warning("failed_to_register_llm_provider", error=str(exc))
 
         # Инициализация БД + AUTH_SCHEMA (идемпотентно)
         async def _init_llm() -> None:
@@ -87,7 +85,7 @@ class LLMModule(ModuleBase):
         else:
             loop.run_until_complete(_init_llm())
 
-        log.info(
+        self._log.info(
             "llm_module_loaded",
             version=self.version,
             default_provider=self._config.default_provider,
@@ -96,4 +94,5 @@ class LLMModule(ModuleBase):
 
     def on_unload(self) -> None:
         self._provider = None
-        log.info("llm_module_unloaded")
+        self._log.info("llm_module_unloaded")
+        self._log = None

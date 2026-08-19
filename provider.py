@@ -53,7 +53,7 @@ class LLMProvider:
         self._config = config
         self._log = log
         self._repo: LLMRepository | None = None
-        self._provider_registry = ProviderRegistry()
+        self._provider_registry = ProviderRegistry(log=log)
         self._init_providers()
 
     def _init_providers(self) -> None:
@@ -65,6 +65,7 @@ class LLMProvider:
                 api_key=pcfg.api_key,
                 default_model=pcfg.default_model,
                 timeout=pcfg.timeout,
+                log=self._log,
             )
             self._provider_registry.register(name, provider)
 
@@ -87,7 +88,7 @@ class LLMProvider:
         from modules.db.provider import DatabaseProvider
 
         db_provider = state.services.resolve(DatabaseProvider)
-        self._repo = LLMRepository(db_provider.pool)
+        self._repo = LLMRepository(db_provider.pool, log=self._log)
 
         await db_provider.register_schema(
             "llm",

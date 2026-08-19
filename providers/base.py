@@ -4,10 +4,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from argenta_logging import get_logger
-
-log = get_logger(__name__)
-
 __all__ = ["BaseProvider"]
 
 
@@ -17,9 +13,10 @@ class BaseProvider(ABC):
     Все провайдеры (OpenAI, llama.cpp и т.д.) наследуют этот класс.
     """
 
-    def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
+    def __init__(self, name: str, config: dict[str, Any] | None = None, log: Any | None = None) -> None:
         self._name = name
         self._config = config or {}
+        self._log = log
 
     @property
     def name(self) -> str:

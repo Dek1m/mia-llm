@@ -3,11 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from argenta_logging import get_logger
-
 from .base import BaseProvider
-
-log = get_logger(__name__)
 
 __all__ = ["ProviderRegistry"]
 
@@ -21,15 +17,17 @@ class ProviderRegistry:
     - Автоматический fallback при ошибках default-провайдера
     """
 
-    def __init__(self) -> None:
+    def __init__(self, log: Any | None = None) -> None:
         self._providers: dict[str, BaseProvider] = {}
         self._default: str | None = None
         self._fallback: str | None = None
+        self._log = log
 
     def register(self, name: str, provider: BaseProvider) -> None:
         """Зарегистрировать провайдер."""
         self._providers[name] = provider
-        log.info("provider_registered", name=name)
+        if self._log is not None:
+            self._log.info("provider_registered", name=name)
 
     def get(self, name: str) -> BaseProvider | None:
         """Получить провайдер по имени."""
@@ -108,10 +106,11 @@ class ProviderRegistry:
             if fallback is None or fallback is default:
                 raise
 
-            log.warning(
-                "llm_fallback_triggered",
-                extra={"default": self._default, "fallback": self._fallback, "error": str(e)},
-            )
+            if self._log is not None:
+                self._log.warning(
+                    "llm_fallback_triggered",
+                    extra={"default": self._default, "fallback": self._fallback, "error": str(e)},
+                )
             return await fallback.chat(
                 messages=messages,
                 model=model,
