@@ -10,7 +10,6 @@
 """
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from modules_system.module_base import ModuleBase, ModuleMeta
@@ -75,22 +74,17 @@ class LLMModule(ModuleBase):
         except Exception as exc:
             self._log.warning("failed_to_register_llm_provider", error=str(exc))
 
-        # Инициализация БД + AUTH_SCHEMA (идемпотентно)
-        async def _init_llm() -> None:
-            await self._provider.initialize(state)
-
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            asyncio.ensure_future(_init_llm())
-        else:
-            loop.run_until_complete(_init_llm())
-
         self._log.info(
             "llm_module_loaded",
             version=self.version,
             default_provider=self._config.default_provider,
             providers=list(self._provider.provider_registry.list_providers()),
         )
+
+    def apply_schema(self, state: Any) -> None:
+        """DDL llm.* + auth seed агентов. Только migrate."""
+        if self._provider is not None:
+            self._provider.initialize_sync(state)
 
     def on_unload(self) -> None:
         self._provider = None
