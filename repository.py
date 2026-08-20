@@ -5,6 +5,41 @@ from typing import Any
 
 __all__ = ["LLMRepository"]
 
+_SYSTEM_AGENTS: list[dict[str, Any]] = [
+    {
+        "name": "build",
+        "agent_type": "system",
+        "description": (
+            "Системный агент для программирования и генерации кода. "
+            "Специализируется на написании, рефакторинге и отладке кода."
+        ),
+        "system_prompt": (
+            "Ты — Build, системный агент для программирования.\n"
+            "Твоя задача — писать чистый, эффективный код.\n"
+            "Следуй стандартам проекта, добавляй type hints, docstrings.\n"
+            "При ошибках — анализируй и исправляй, а не просто переписывай."
+        ),
+        "model": None,
+        "settings": {"temperature": 0.3, "max_tokens": 4096},
+    },
+    {
+        "name": "plan",
+        "agent_type": "system",
+        "description": (
+            "Системный агент для планирования задач и декомпозиции. "
+            "Разбивает сложные задачи на подзадачи, определяет зависимости."
+        ),
+        "system_prompt": (
+            "Ты — Plan, системный агент для планирования.\n"
+            "Твоя задача — декомпозировать сложные задачи на подзадачи.\n"
+            "Определяй зависимости, оценивай трудоёмкость, предлагай порядок выполнения.\n"
+            "Формат: нумерованный список с зависимостями."
+        ),
+        "model": None,
+        "settings": {"temperature": 0.5, "max_tokens": 2048},
+    },
+]
+
 
 class LLMRepository:
     """Репозиторий для агентов LLM."""
@@ -143,38 +178,42 @@ class LLMRepository:
 
     async def seed_system_agents(self) -> None:
         """Идемпотентная вставка системных агентов Build и Plan."""
-        # Build — программирование/кодинг
-        await self.create_agent(
-            name="build",
-            agent_type="system",
-            description="Системный агент для программирования и генерации кода. "
-                        "Специализируется на написании, рефакторинге и отладке кода.",
-            system_prompt=(
-                "Ты — Build, системный агент для программирования.\n"
-                "Твоя задача — писать чистый, эффективный код.\n"
-                "Следуй стандартам проекта, добавляй type hints, docstrings.\n"
-                "При ошибках — анализируй и исправляй, а не просто переписывай."
-            ),
-            model=None,  # из конфига провайдера по умолчанию
-            settings={"temperature": 0.3, "max_tokens": 4096},
-        )
+        for spec in _SYSTEM_AGENTS:
+            await self.create_agent(**spec)
+        if self._log is not None:
+            self._log.info("System agents seeded (build, plan)")
 
-        # Plan — планирование задач
-        await self.create_agent(
-            name="plan",
-            agent_type="system",
-            description="Системный агент для планирования задач и декомпозиции. "
-                        "Разбивает сложные задачи на подзадачи, определяет зависимости.",
-            system_prompt=(
-                "Ты — Plan, системный агент для планирования.\n"
-                "Твоя задача — декомпозировать сложные задачи на подзадачи.\n"
-                "Определяй зависимости, оценивай трудоёмкость, предлагай порядок выполнения.\n"
-                "Формат: нумерованный список с зависимостями."
-            ),
-            model=None,
-            settings={"temperature": 0.5, "max_tokens": 2048},
-        )
+    def seed_system_agents_sync(self) -> None:
+        """Синхронный сид для on_load. Не через @task."""
+        import json
 
+        sql = (
+            "INSERT INTO llm.llm_agents "
+            "(name, agent_type, description, system_prompt, model, settings) "
+            "VALUES (%s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (name) DO UPDATE SET "
+            "description = EXCLUDED.description, "
+            "system_prompt = EXCLUDED.system_prompt, "
+            "model = EXCLUDED.model, "
+            "settings = EXCLUDED.settings, "
+            "updated_at = NOW()"
+        )
+        if not hasattr(self._pool, "connection"):
+            return
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                for spec in _SYSTEM_AGENTS:
+                    cur.execute(
+                        sql,
+                        (
+                            spec["name"],
+                            spec["agent_type"],
+                            spec["description"],
+                            spec["system_prompt"],
+                            spec["model"],
+                            json.dumps(spec["settings"] or {}),
+                        ),
+                    )
         if self._log is not None:
             self._log.info("System agents seeded (build, plan)")
 

@@ -1,6 +1,7 @@
 """OpenAI-compatible LLM Provider — работает с OpenAI API и совместимыми серверами."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from .base import BaseProvider
@@ -61,14 +62,40 @@ class OpenAIProvider(BaseProvider):
             headers["Authorization"] = f"Bearer {self._api_key}"
 
         url = f"{self._base_url}/chat/completions"
+        started = time.monotonic()
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(url, json=payload, headers=headers)
+                resp.raise_for_status()
+                data = resp.json()
+        except Exception as exc:
+            duration_ms = round((time.monotonic() - started) * 1000, 1)
+            if self._log is not None:
+                self._log.error(
+                    "llm_chat_failed",
+                    extra={
+                        "llm.model": model,
+                        "llm.duration_ms": duration_ms,
+                        "error_type": type(exc).__name__,
+                    },
+                )
+            raise
 
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
-            resp = await client.post(url, json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-
+        duration_ms = round((time.monotonic() - started) * 1000, 1)
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
+        usage = data.get("usage") or {}
+        extra = {
+            "llm.model": data.get("model", model),
+            "llm.duration_ms": duration_ms,
+            "llm.tokens.input": usage.get("prompt_tokens"),
+            "llm.tokens.output": usage.get("completion_tokens"),
+        }
+        if self._log is not None:
+            if duration_ms > 500:
+                self._log.warning("llm_chat_slow", extra=extra)
+            else:
+                self._log.info("llm_chat_ok", extra=extra)
 
         return {
             "content": message.get("content"),
@@ -98,7 +125,7 @@ class OpenAIProvider(BaseProvider):
                 return [m.get("id", "") for m in data.get("data", [])]
         except Exception as e:
             if self._log is not None:
-                self._log.warning("Failed to list models", extra={"error": str(e)})
+                self._log.warning("llm_models_failed", extra={"error_type": type(e).__name__})
             return []
 
     async def health(self) -> bool:

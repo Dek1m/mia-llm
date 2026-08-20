@@ -1,15 +1,15 @@
 {
   "version": "1.0.0",
   "files": {
-    "__init__.py": "b84d0ce1ecd9a2643e23cb032c8e797c50d6d67325c734d9342508cf5b066b35",
+    "__init__.py": "3e143983764cdbd5cf7584971c6f3ec8ee7ed9525a3d01fd4712b202670c1c70",
     "config.py": "1d26709c8f7b683116a8c5dc756387ccdd337ec38838e6e153bad26215f2c64d",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
-    "provider.py": "2485edcbb3615419a8debd85dd27c3afdfc531830f74765de24990a483bd9ee8",
+    "provider.py": "4c653a71d387651be55946411f9532ed719bee901c3120952a40b4e4f64276b6",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
-    "providers/base.py": "ea6afe742d6d786aab1db2033192ec27e56f068c461c0494e876b5a121d3ccda",
-    "providers/openai.py": "0fe5e9fa1fc9178eb27434f2a3b5288333b0a04c945482a4c1ab0e352a1b9e52",
-    "providers/registry.py": "f94bc33461cc08a03f08294f8b801e2246d14a8a13725cef7f40b0ac1ef7c899",
-    "repository.py": "a816ace2d6cfaa8c04dcce541092ee9b805fb81061d4381727fbd54b919037d1",
+    "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
+    "providers/openai.py": "b29e26f3c2f51a4f5715ed6686338c9906c4ee80d8fd54de2929ded98b22418f",
+    "providers/registry.py": "a6e0710e856de8e16f3e9b8e4b4dbe67ecbe31f91ba41e9dc5061f2887db6c39",
+    "repository.py": "65520cdc7b7266cd99165d3f57d428e60452b8c3394fd276e3837e5a8045ccf3",
     "schema.py": "33f0e109868d487c321fc95e33bd9d246778f4abe52fb05093753964121c133e",
     "schemas.py": "cdad1fe50853de3cfe82318ce37e4b292e64c2abe8326880182cb196a0359b5f",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -18,5 +18,5 @@
     "tests/test_provider.py": "3f213627622c25f8367fe50ce33316aa671d18c90363e3b43c7393aa04e5516f",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "6ac6a7a8f10a38e39b1ba52c009690ee8f844a3d8a20b2771cec1da4f63cbec4"
+  "manifest_hash": "79cdbfc115e5f224543cada605913396186f9e38d5bd01abb4b3d97920a303b6"
 }

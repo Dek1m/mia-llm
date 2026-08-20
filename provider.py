@@ -86,28 +86,25 @@ class LLMProvider:
     @task(type="database")
     async def initialize(self, state: Any) -> None:
         """Регистрация БД-схемы и AUTH_SCHEMA."""
-        # Регистрация БД-схемы
+        self.initialize_sync(state)
+
+    def initialize_sync(self, state: Any) -> None:
+        """Синхронная версия initialize для on_load. Не через @task."""
         from modules.db.provider import DatabaseProvider
 
         db_provider = state.services.resolve(DatabaseProvider)
         self._repo = LLMRepository(db_provider.pool, log=self._log)
-
-        await db_provider.register_schema(
+        db_provider.register_schema(
             "llm",
             DB_SCHEMA,
             schema_name="llm",
             ddl_dir="ddl",
         )
-
-        # Регистрация AUTH_SCHEMA
         from modules.auth.schema_registry import AuthSchemaRegistry
 
         auth_registry = state.services.resolve(AuthSchemaRegistry)
-        await auth_registry.register("llm", LLM_SCHEMA, is_builtin=False)
-
-        # Сид системных агентов
-        await self._repo.seed_system_agents()
-
+        auth_registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
+        self._repo.seed_system_agents_sync()
         self._log.info("LLM schema registered, system agents seeded")
 
     # ── Chat ────────────────────────────────────────────
