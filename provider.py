@@ -7,7 +7,6 @@ from __future__ import annotations
 from typing import Any
 
 
-from modules.auth.decorators import auth_method
 from core.task_decorator import task
 
 from .config import LLMConfig
@@ -109,15 +108,15 @@ class LLMProvider:
 
     # ── Chat ────────────────────────────────────────────
 
-    @auth_method(
+    @task(
+        type="network",
+        api=True,
+        permission="llm:chat",
         name="chat",
         description="Вызов LLM через chat completions",
         args={"messages": "list", "model": "str", "provider": "str"},
         return_type="dict",
-        public=False,
-        required_permission="llm:chat",
     )
-    @task(type="network")
     async def chat(
         self,
         messages: list[dict[str, Any]],
@@ -132,15 +131,15 @@ class LLMProvider:
             **kwargs,
         )
 
-    @auth_method(
+    @task(
+        type="network",
+        api=True,
+        permission="llm:chat_stream",
         name="chat_stream",
         description="Потоковый вывод LLM (пока синхронный обёртка)",
         args={"messages": "list", "model": "str"},
         return_type="dict",
-        public=False,
-        required_permission="llm:chat_stream",
     )
-    @task(type="network")
     async def chat_stream(
         self,
         messages: list[dict[str, Any]],
@@ -152,15 +151,15 @@ class LLMProvider:
 
     # ── Agents ──────────────────────────────────────────
 
-    @auth_method(
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_list",
         name="agents",
         description="Список всех агентов (системные + пользовательские + workspace)",
         args={"agent_type": "str", "workspace_id": "str", "offset": "int", "limit": "int"},
         return_type="dict",
-        public=False,
-        required_permission="llm:agent_list",
     )
-    @task(type="database")
     async def agents(
         self,
         agent_type: str | None = None,
@@ -177,15 +176,15 @@ class LLMProvider:
         )
         return {"items": items, "total": total, "offset": offset, "limit": limit}
 
-    @auth_method(
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_list",
         name="agent",
         description="Получить информацию об агенте",
         args={"agent_id": "str"},
         return_type="dict",
-        public=False,
-        required_permission="llm:agent_list",
     )
-    @task(type="database")
     async def agent(self, agent_id: str) -> dict[str, Any]:
         """Получить агента по ID."""
         if self._repo is None:
@@ -195,7 +194,10 @@ class LLMProvider:
             raise NotFoundError("Agent")
         return row
 
-    @auth_method(
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_manage",
         name="create_agent",
         description="Создать нового агента (пользовательский/workspace)",
         args={
@@ -203,10 +205,7 @@ class LLMProvider:
             "system_prompt": "str", "model": "str", "workspace_id": "str",
         },
         return_type="dict",
-        public=False,
-        required_permission="llm:agent_manage",
     )
-    @task(type="database")
     async def create_agent(
         self,
         name: str,
@@ -236,15 +235,15 @@ class LLMProvider:
         )
         return row
 
-    @auth_method(
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_manage",
         name="update_agent",
         description="Обновить агента",
         args={"agent_id": "str", "data": "dict"},
         return_type="dict",
-        public=False,
-        required_permission="llm:agent_manage",
     )
-    @task(type="database")
     async def update_agent(self, agent_id: str, data: dict[str, Any]) -> dict[str, Any]:
         """Обновить агента."""
         if self._repo is None:
@@ -262,15 +261,15 @@ class LLMProvider:
             raise NotFoundError("Agent")
         return result
 
-    @auth_method(
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_manage",
         name="delete_agent",
         description="Удалить агента",
         args={"agent_id": "str"},
         return_type="bool",
-        public=False,
-        required_permission="llm:agent_manage",
     )
-    @task(type="database")
     async def delete_agent(self, agent_id: str) -> bool:
         """Удалить агента."""
         if self._repo is None:
@@ -286,15 +285,15 @@ class LLMProvider:
 
     # ── Providers ───────────────────────────────────────
 
-    @auth_method(
+    @task(
+        type="cpu",
+        api=True,
+        permission="llm:config",
         name="get_providers",
         description="Список зарегистрированных LLM-провайдеров и их статус",
         args={},
         return_type="list",
-        public=False,
-        required_permission="llm:config",
     )
-    @task(type="cpu")
     async def get_providers(self) -> list[dict[str, Any]]:
         """Получить список провайдеров с health-check."""
         providers = self._provider_registry.list_providers()

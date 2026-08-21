@@ -98,3 +98,43 @@ class TestSchemaRegistration:
         assert "schema" in DB_SCHEMA
         assert DB_SCHEMA["schema"] == "llm"
         assert "llm_agents" in DB_SCHEMA
+
+
+class TestApiExport:
+    """@task(api=True) на LLMProvider: 8 методов, initialize без api."""
+
+    def test_collect_from_module_exports_eight_api_methods(
+        self, provider: LLMProvider,
+    ) -> None:
+        from modules.apiproxy.registry import MethodRegistry
+
+        reg = MethodRegistry()
+        count = reg.collect_from_module(provider, "llm")
+        names = {m.name for m in reg.list_methods("llm")}
+        assert count == 8
+        assert names == {
+            "chat",
+            "chat_stream",
+            "agents",
+            "agent",
+            "create_agent",
+            "update_agent",
+            "delete_agent",
+            "get_providers",
+        }
+
+    def test_initialize_has_no_api_meta(self) -> None:
+        assert not hasattr(LLMProvider.initialize, "_api_meta")
+        assert hasattr(LLMProvider.initialize, "_task_type")
+
+    def test_all_api_methods_have_llm_permission(
+        self, provider: LLMProvider,
+    ) -> None:
+        from modules.apiproxy.registry import MethodRegistry
+
+        reg = MethodRegistry()
+        reg.collect_from_module(provider, "llm")
+        for meta in reg.list_methods("llm"):
+            assert meta.required_permission, f"{meta.name} без permission"
+            assert meta.required_permission.startswith("llm:")
+            assert meta.public is False
