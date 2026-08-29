@@ -114,7 +114,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 16
+        assert count == 18
         assert names == {
             "chat",
             "chat_stream",
@@ -132,6 +132,8 @@ class TestApiExport:
             "set_model_enabled",
             "delete_provider",
             "set_model_reasoning",
+            "update_provider",
+            "delete_model",
         }
 
     def test_initialize_has_no_api_meta(self) -> None:

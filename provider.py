@@ -452,6 +452,66 @@ class LLMProvider:
         return {"ok": True, "id": provider_id}
 
     @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="update_provider",
+        description="Переименовать провайдера и обновить поля",
+        args={
+            "provider_id": "str",
+            "name": "str",
+            "description": "str",
+            "base_url": "str",
+            "api_key": "str",
+        },
+        return_type="dict",
+    )
+    async def update_provider(
+        self,
+        provider_id: str,
+        name: str,
+        description: str | None = None,
+        base_url: str | None = None,
+        api_key: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        if base_url:
+            _validate_base_url(base_url)
+        row = await self._repo.update_provider(
+            provider_id=provider_id,
+            name=name.strip(),
+            description=(description or "").strip() or None,
+            base_url=base_url.strip() if isinstance(base_url, str) and base_url.strip() else base_url,
+            api_key=api_key.strip() if isinstance(api_key, str) and api_key.strip() else None,
+        )
+        if not row:
+            raise NotFoundError("Provider")
+        return row
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="delete_model",
+        description="Удалить модель провайдера",
+        args={"model_id": "str"},
+        return_type="dict",
+    )
+    async def delete_model(
+        self,
+        model_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        deleted = await self._repo.delete_model(model_id)
+        if not deleted:
+            raise NotFoundError("Model")
+        return {"ok": True, "id": model_id}
+
+    @task(
         type="network",
         api=True,
         permission="llm:provider_manage",
@@ -563,7 +623,7 @@ class LLMProvider:
 
         url = _models_endpoint(base_url)
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
+            async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
                 response = await client.get(
                     url,
                     headers={"Authorization": f"Bearer {api_key}"},
@@ -599,6 +659,11 @@ def _models_endpoint(base_url: str) -> str:
 def _parse_models(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         raw = payload.get("data") or payload.get("models") or payload.get("items") or []
+        if not raw:
+            for value in payload.values():
+                if isinstance(value, list) and value:
+                    raw = value
+                    break
     elif isinstance(payload, list):
         raw = payload
     else:

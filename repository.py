@@ -448,6 +448,67 @@ class LLMRepository:
         )
         return dict(row) if row is not None else {}
 
+    async def update_provider(
+        self,
+        provider_id: str,
+        name: str,
+        description: str | None,
+        base_url: str | None,
+        api_key: str | None = None,
+    ) -> dict[str, Any]:
+        if self._psycopg_pool():
+            if api_key:
+                row = self._fetch_one(
+                    "UPDATE llm.llm_providers SET name = %s, description = %s, base_url = %s, "
+                    "api_key = %s, updated_at = NOW() WHERE id = %s RETURNING *",
+                    (name, description, base_url, api_key, provider_id),
+                )
+            else:
+                row = self._fetch_one(
+                    "UPDATE llm.llm_providers SET name = %s, description = %s, base_url = %s, "
+                    "updated_at = NOW() WHERE id = %s RETURNING *",
+                    (name, description, base_url, provider_id),
+                )
+            if not row:
+                return {}
+            public = self._public_provider(row)
+            public["models"] = await self.list_models(provider_id)
+            return public
+        if api_key:
+            row = await self._pool.fetchrow(
+                "UPDATE llm.llm_providers SET name = $1, description = $2, base_url = $3, "
+                "api_key = $4, updated_at = NOW() WHERE id = $5 RETURNING *",
+                name,
+                description,
+                base_url,
+                api_key,
+                provider_id,
+            )
+        else:
+            row = await self._pool.fetchrow(
+                "UPDATE llm.llm_providers SET name = $1, description = $2, base_url = $3, "
+                "updated_at = NOW() WHERE id = $4 RETURNING *",
+                name,
+                description,
+                base_url,
+                provider_id,
+            )
+        data = dict(row) if row is not None else {}
+        if not data:
+            return {}
+        public = self._public_provider(data)
+        public["models"] = await self.list_models(provider_id)
+        return public
+
+    async def delete_model(self, model_id: str) -> bool:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM llm.llm_models WHERE id = %s", (model_id,))
+                    return cur.rowcount > 0
+        result = await self._pool.execute("DELETE FROM llm.llm_models WHERE id = $1", model_id)
+        return bool(result) and "DELETE 0" not in str(result)
+
     async def delete_provider(self, provider_id: str) -> bool:
         if self._psycopg_pool():
             with self._pool.connection() as conn:
