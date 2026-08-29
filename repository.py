@@ -390,15 +390,12 @@ class LLMRepository:
                                 "WHERE id = %s",
                                 (item["id"],),
                             )
-                    for model_id in remote_ids:
-                        cur.execute(
-                            "INSERT INTO llm.llm_models "
-                            "(provider_id, model_id, display_name, enabled, is_available) "
-                            "VALUES (%s, %s, %s, FALSE, TRUE) "
-                            "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
-                            "is_available = TRUE, updated_at = NOW()",
-                            (provider_id, model_id, model_id),
-                        )
+                        else:
+                            cur.execute(
+                                "UPDATE llm.llm_models SET is_available = TRUE, updated_at = NOW() "
+                                "WHERE id = %s",
+                                (item["id"],),
+                            )
         else:
             for item in stored:
                 if item["model_id"] not in remote and item.get("enabled"):
