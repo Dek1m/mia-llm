@@ -114,7 +114,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 20
+        assert count == 23
         assert names == {
             "chat",
             "chat_stream",
@@ -126,7 +126,10 @@ class TestApiExport:
             "get_providers",
             "list_providers",
             "create_provider",
+            "list_oauth_vendors",
             "start_oauth",
+            "poll_oauth",
+            "probe_provider_models",
             "probe_models",
             "refresh_catalog",
             "set_model_enabled",
@@ -168,8 +171,31 @@ class TestSavedProviders:
         assert row["api_key_set"] is True
         assert "api_key" not in row
 
-    async def test_start_oauth_pending_client(self, provider: LLMProvider) -> None:
-        row = await provider.start_oauth("acme")
-        assert row["status"] == "pending_client"
-        assert row["vendor"] == "acme"
-        assert row["mode"] == "device_code"
+    async def test_list_oauth_vendors_includes_xai(self, provider: LLMProvider) -> None:
+        row = await provider.list_oauth_vendors()
+        ids = {item["id"] for item in row["items"]}
+        assert "xai" in ids
+
+    async def test_start_oauth_unknown_vendor(self, provider: LLMProvider) -> None:
+        with pytest.raises(Exception) as caught:
+            await provider.start_oauth("acme")
+        assert getattr(caught.value, "code", "") == "OAUTH_UNSUPPORTED"
+
+    async def test_start_oauth_device_code(self, provider: LLMProvider, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def fake_device(_vendor: object) -> dict[str, object]:
+            return {
+                "device_code": "dev-1",
+                "user_code": "ABCD-1234",
+                "verification_uri": "https://accounts.x.ai/oauth2/device",
+                "verification_uri_complete": "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234",
+                "interval": 5,
+                "expires_in": 900,
+                "expires_at": 9999999999,
+            }
+
+        monkeypatch.setattr("modules.llm.provider.request_device_code", fake_device)
+        row = await provider.start_oauth("xai", name="xAI")
+        assert row["status"] == "authorizing"
+        assert row["user_code"] == "ABCD-1234"
+        assert row["vendor"] == "xai"
+        assert row["provider_id"]

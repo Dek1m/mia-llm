@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import time
 from typing import Any
 
 
@@ -17,7 +18,17 @@ from .models import AgentInfo
 from .providers.base import BaseProvider
 from .providers.openai import OpenAIProvider
 from .providers.registry import ProviderRegistry
-from .secrets import decrypt_secret, encrypt_secret
+from .oauth import (
+    bearer_from_stored,
+    get_vendor,
+    list_vendors,
+    pack_device,
+    pack_tokens,
+    poll_device_token,
+    request_device_code,
+    unpack_secret,
+)
+from .secrets import encrypt_secret
 
 
 __all__ = ["LLMProvider"]
@@ -438,25 +449,150 @@ class LLMProvider:
         return row
 
     @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="list_oauth_vendors",
+        description="Список OAuth-вендоров с device-code",
+        args={},
+        return_type="dict",
+    )
+    async def list_oauth_vendors(self, _session_user_id: str | None = None) -> dict[str, Any]:
+        return {"items": list_vendors()}
+
+    @task(
         type="network",
         api=True,
         permission="llm:provider_manage",
         name="start_oauth",
-        description="Начать OAuth провайдера (нужен client_id приложения)",
-        args={"vendor": "str"},
+        description="Начать device-code OAuth и создать pending-провайдера",
+        args={"vendor": "str", "name": "str", "description": "str"},
         return_type="dict",
     )
     async def start_oauth(
         self,
         vendor: str,
+        name: str | None = None,
+        description: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        vendor_norm = (vendor or "oauth").strip().lower() or "oauth"
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        spec = get_vendor(vendor)
+        if spec is None:
+            raise LLMError(
+                f"unsupported oauth vendor {vendor!r}",
+                "OAUTH_UNSUPPORTED",
+                human="This OAuth provider is not supported yet",
+            )
+        try:
+            device = await request_device_code(spec)
+        except Exception as exc:
+            raise LLMError(str(exc), "OAUTH_DENIED", human="Could not start sign-in") from exc
+        label = (name or "").strip() or spec.name
+        blob = pack_device(device["device_code"], int(device["interval"]), int(device["expires_at"]))
+        try:
+            row = await self._repo.create_provider(
+                name=label,
+                kind="oauth",
+                vendor=spec.id,
+                description=(description or "").strip() or None,
+                base_url=spec.base_url,
+                api_key=blob,
+                oauth_status="authorizing",
+            )
+        except Exception as exc:
+            if _is_duplicate_name(exc):
+                _raise_duplicate_name(label, exc)
+            raise
         return {
-            "vendor": vendor_norm,
-            "status": "pending_client",
+            "provider_id": str(row["id"]),
+            "vendor": spec.id,
+            "status": "authorizing",
             "mode": "device_code",
+            "user_code": device["user_code"],
+            "verification_uri": device["verification_uri"],
+            "verification_uri_complete": device["verification_uri_complete"],
+            "interval": device["interval"],
+            "expires_in": device["expires_in"],
+            "provider": row,
         }
+
+    @task(
+        type="network",
+        api=True,
+        permission="llm:provider_manage",
+        name="poll_oauth",
+        description="Один шаг device-code poll",
+        args={"provider_id": "str"},
+        return_type="dict",
+    )
+    async def poll_oauth(
+        self,
+        provider_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        row = await self._repo.get_provider(provider_id)
+        if not row:
+            raise NotFoundError("Provider")
+        spec = get_vendor(str(row.get("vendor") or ""))
+        if spec is None:
+            raise LLMError("unsupported oauth vendor", "OAUTH_UNSUPPORTED", human="This OAuth provider is not supported yet")
+        secret = unpack_secret(row.get("api_key"))
+        if secret and secret.get("kind") == "token":
+            public = dict(row)
+            public.pop("api_key", None)
+            public["api_key_set"] = True
+            public["models"] = await self._repo.list_models(provider_id)
+            return {"status": "connected", "provider": public}
+        if not secret or secret.get("kind") != "device":
+            raise LLMError("oauth session missing", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
+        if int(secret.get("expires_at") or 0) and int(secret["expires_at"]) < int(time.time()):
+            await self._repo.set_oauth_state(provider_id, row.get("api_key") or "", "expired")
+            raise LLMError("device code expired", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
+        result = await poll_device_token(spec, str(secret.get("device_code") or ""))
+        status = result.get("status")
+        if status == "pending" or status == "slow_down":
+            return {"status": "pending", "interval": int(secret.get("interval") or 5)}
+        if status == "expired":
+            await self._repo.set_oauth_state(provider_id, row.get("api_key") or "", "expired")
+            raise LLMError("device code expired", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
+        if status == "denied":
+            await self._repo.set_oauth_state(provider_id, row.get("api_key") or "", "denied")
+            raise LLMError("access denied", "OAUTH_DENIED", human="Sign-in was denied")
+        if status != "connected":
+            raise LLMError(str(result.get("detail") or "oauth failed"), "OAUTH_DENIED", human="Could not finish sign-in")
+        blob = pack_tokens(str(result["access"]), result.get("refresh"), int(result["expires_at"]))
+        public = await self._repo.set_oauth_state(provider_id, blob, "connected")
+        return {"status": "connected", "provider": public}
+
+    @task(
+        type="network",
+        api=True,
+        permission="llm:provider_manage",
+        name="probe_provider_models",
+        description="Каталог моделей сохранённого провайдера",
+        args={"provider_id": "str"},
+        return_type="dict",
+    )
+    async def probe_provider_models(
+        self,
+        provider_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        row = await self._repo.get_provider(provider_id)
+        if not row:
+            raise NotFoundError("Provider")
+        token = bearer_from_stored(row.get("api_key"))
+        base = row.get("base_url")
+        if not token or not base:
+            raise LLMError("sign-in is not finished", "OAUTH_PENDING", human="Finish sign-in first")
+        items = await self._fetch_remote_models(str(base), token)
+        return {"items": items}
 
     @task(
         type="database",
@@ -508,17 +644,22 @@ class LLMProvider:
         if self._repo is None:
             raise LLMError("LLM not initialized (no DB pool)")
         key = api_key.strip() if isinstance(api_key, str) else ""
-        if not key:
+        existing = await self._repo.get_provider(provider_id)
+        if not existing:
+            raise NotFoundError("Provider")
+        oauth = str(existing.get("kind") or "") == "oauth"
+        if not key and not oauth:
             raise LLMError("API key is required", "INVALID_NAME")
-        if base_url:
-            _validate_base_url(base_url)
+        next_url = base_url.strip() if isinstance(base_url, str) and base_url.strip() else existing.get("base_url")
+        if next_url:
+            _validate_base_url(str(next_url))
         try:
             row = await self._repo.update_provider(
                 provider_id=provider_id,
                 name=name.strip(),
                 description=(description or "").strip() or None,
-                base_url=base_url.strip() if isinstance(base_url, str) and base_url.strip() else base_url,
-                api_key=_cipher_key(key),
+                base_url=str(next_url) if next_url else None,
+                api_key=_cipher_key(key) if key else None,
                 models=models,
             )
         except Exception as exc:
@@ -583,7 +724,7 @@ class LLMProvider:
             return {"vanished": []}
         vanished: list[dict[str, Any]] = []
         for row in await self._repo.list_providers_with_secrets():
-            key = decrypt_secret(row.get("api_key"))
+            key = bearer_from_stored(row.get("api_key"))
             base = row.get("base_url")
             if not key or not base:
                 continue

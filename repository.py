@@ -369,6 +369,45 @@ class LLMRepository:
             rows = [dict(row) for row in fetched]
         return rows
 
+    async def get_provider(self, provider_id: str) -> dict[str, Any]:
+        if self._psycopg_pool():
+            return self._fetch_one(
+                "SELECT * FROM llm.llm_providers WHERE id = %s",
+                (provider_id,),
+            )
+        row = await self._pool.fetchrow(
+            "SELECT * FROM llm.llm_providers WHERE id = $1",
+            provider_id,
+        )
+        return dict(row) if row is not None else {}
+
+    async def set_oauth_state(
+        self,
+        provider_id: str,
+        api_key: str,
+        oauth_status: str,
+    ) -> dict[str, Any]:
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "UPDATE llm.llm_providers SET api_key = %s, oauth_status = %s, updated_at = NOW() "
+                "WHERE id = %s RETURNING *",
+                (api_key, oauth_status, provider_id),
+            )
+        else:
+            fetched = await self._pool.fetchrow(
+                "UPDATE llm.llm_providers SET api_key = $1, oauth_status = $2, updated_at = NOW() "
+                "WHERE id = $3 RETURNING *",
+                api_key,
+                oauth_status,
+                provider_id,
+            )
+            row = dict(fetched) if fetched is not None else {}
+        if not row:
+            return {}
+        public = self._public_provider(row)
+        public["models"] = await self.list_models(provider_id)
+        return public
+
     async def replace_remote_models(
         self,
         provider_id: str,
