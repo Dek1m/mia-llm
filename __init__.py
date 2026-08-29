@@ -75,11 +75,12 @@ class LLMModule(ModuleBase):
 
             database = state.services.resolve(DatabaseProvider)
             self._provider.bind_pool(database.pool)
-            from modules.auth.schema_registry import AuthSchemaRegistry
+            from modules.auth.provider import AuthProvider
             from .schema import LLM_SCHEMA
 
-            registry = state.services.resolve(AuthSchemaRegistry)
-            registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
+            auth = state.services.resolve(AuthProvider)
+            if auth.registry is not None:
+                auth.registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
         except Exception as exc:
             self._log.warning("failed_to_register_llm_provider", error=str(exc))
         state.llm = self._provider
