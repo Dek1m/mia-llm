@@ -18,7 +18,8 @@ DB_SCHEMA: dict[str, dict[str, Any]] = {
             "system_prompt": "TEXT",
             "model": "TEXT",
             "settings": "JSONB DEFAULT '{}'::jsonb",
-            "workspace_id": "UUID REFERENCES workspace.workspaces(id) ON DELETE CASCADE",
+            # UUID без FK: workspace.workspaces живёт в per-user БД, не в belle.
+            "workspace_id": "UUID",
             "owner_id": "UUID REFERENCES auth.users(id)",
             "is_active": "BOOLEAN DEFAULT TRUE",
             "created_at": "TIMESTAMPTZ DEFAULT NOW()",

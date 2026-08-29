@@ -93,22 +93,29 @@ class LLMProvider:
 
     def initialize_sync(self, state: Any) -> None:
         """Синхронная версия initialize для on_load. Не через @task."""
+        from copy import deepcopy
+
+        from modules.auth.provider import AuthProvider
         from modules.db.provider import DatabaseProvider
 
         db_provider = state.services.resolve(DatabaseProvider)
         self._repo = LLMRepository(db_provider.pool, log=self._log)
         db_provider.register_schema(
             "llm",
-            DB_SCHEMA,
+            deepcopy(DB_SCHEMA),
             schema_name="llm",
             ddl_dir="ddl",
         )
-        from modules.auth.schema_registry import AuthSchemaRegistry
-
-        auth_registry = state.services.resolve(AuthSchemaRegistry)
-        auth_registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
+        try:
+            auth = state.services.resolve(AuthProvider)
+            if auth.registry is not None:
+                auth.registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_auth_schema_skipped", extra={"error": str(exc)})
         self._repo.seed_system_agents_sync()
-        self._log.info("LLM schema registered, system agents seeded")
+        if self._log is not None:
+            self._log.info("LLM schema registered, system agents seeded")
 
     # ── Chat ────────────────────────────────────────────
 
