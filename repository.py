@@ -62,6 +62,31 @@ class LLMRepository:
         owner_id: str | None = None,
     ) -> dict[str, Any]:
         import json
+        args = (
+            name,
+            agent_type,
+            description,
+            system_prompt,
+            model,
+            json.dumps(settings or {}),
+            workspace_id,
+            owner_id,
+        )
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "INSERT INTO llm.llm_agents "
+                "(name, agent_type, description, system_prompt, model, settings, workspace_id, owner_id) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s) "
+                "ON CONFLICT (name) DO UPDATE SET "
+                "description = EXCLUDED.description, "
+                "system_prompt = EXCLUDED.system_prompt, "
+                "model = EXCLUDED.model, "
+                "settings = EXCLUDED.settings, "
+                "updated_at = NOW() "
+                "RETURNING *",
+                args,
+            )
+            return self._public_agent(row)
         row = await self._pool.fetchrow(
             "INSERT INTO llm.llm_agents "
             "(name, agent_type, description, system_prompt, model, settings, workspace_id, owner_id) "
@@ -73,28 +98,31 @@ class LLMRepository:
             "settings = EXCLUDED.settings, "
             "updated_at = NOW() "
             "RETURNING *",
-            name,
-            agent_type,
-            description,
-            system_prompt,
-            model,
-            json.dumps(settings or {}),
-            workspace_id,
-            owner_id,
+            *args,
         )
-        return dict(row) if row else {}
+        return self._public_agent(dict(row) if row else {})
 
     async def get_agent(self, agent_id: str) -> dict[str, Any] | None:
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "SELECT * FROM llm.llm_agents WHERE id = %s", (agent_id,),
+            )
+            return self._public_agent(row) or None
         row = await self._pool.fetchrow(
             "SELECT * FROM llm.llm_agents WHERE id = $1", agent_id,
         )
-        return dict(row) if row else None
+        return self._public_agent(dict(row)) if row else None
 
     async def get_agent_by_name(self, name: str) -> dict[str, Any] | None:
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "SELECT * FROM llm.llm_agents WHERE name = %s", (name,),
+            )
+            return self._public_agent(row) or None
         row = await self._pool.fetchrow(
             "SELECT * FROM llm.llm_agents WHERE name = $1", name,
         )
-        return dict(row) if row else None
+        return self._public_agent(dict(row)) if row else None
 
     async def update_agent(
         self, agent_id: str, data: dict[str, Any],
@@ -102,28 +130,54 @@ class LLMRepository:
         if not data:
             return await self.get_agent(agent_id)
 
+        allowed = {
+            "name", "agent_type", "description", "system_prompt", "model",
+            "settings", "workspace_id", "owner_id", "is_active",
+        }
         set_parts = []
         params: list[Any] = []
         idx = 1
         for key, value in data.items():
+            if key not in allowed:
+                continue
             if key == "settings" and isinstance(value, dict):
                 import json
-                set_parts.append(f"{key} = ${idx}::jsonb")
+                if self._psycopg_pool():
+                    set_parts.append(f"{key} = %s::jsonb")
+                else:
+                    set_parts.append(f"{key} = ${idx}::jsonb")
                 params.append(json.dumps(value))
+            elif self._psycopg_pool():
+                set_parts.append(f"{key} = %s")
+                params.append(value)
             else:
                 set_parts.append(f"{key} = ${idx}")
                 params.append(value)
             idx += 1
+        if not set_parts:
+            return await self.get_agent(agent_id)
 
         params.append(agent_id)
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                f"UPDATE llm.llm_agents SET {', '.join(set_parts)}, "
+                "updated_at = NOW() WHERE id = %s RETURNING *",
+                tuple(params),
+            )
+            return self._public_agent(row) or None
         row = await self._pool.fetchrow(
             f"UPDATE llm.llm_agents SET {', '.join(set_parts)}, "
             f"updated_at = NOW() WHERE id = ${idx} RETURNING *",
             *params,
         )
-        return dict(row) if row else None
+        return self._public_agent(dict(row)) if row else None
 
     async def delete_agent(self, agent_id: str) -> bool:
+        if self._psycopg_pool():
+            result = self._execute(
+                "DELETE FROM llm.llm_agents WHERE id = %s", (agent_id,),
+            )
+            return "DELETE 1" in str(result)
         result = await self._pool.execute(
             "DELETE FROM llm.llm_agents WHERE id = $1", agent_id,
         )
@@ -139,34 +193,48 @@ class LLMRepository:
         limit: int = 100,
     ) -> tuple[list[dict[str, Any]], int]:
         """Список агентов с фильтрами и пагинацией."""
+        pg = self._psycopg_pool()
         where_parts = []
         params: list[Any] = []
         idx = 1
 
+        def mark() -> str:
+            nonlocal idx
+            if pg:
+                return "%s"
+            token = f"${idx}"
+            idx += 1
+            return token
+
         if agent_type:
-            where_parts.append(f"agent_type = ${idx}")
+            where_parts.append(f"agent_type = {mark()}")
             params.append(agent_type)
-            idx += 1
         if workspace_id:
-            where_parts.append(f"workspace_id = ${idx}")
+            where_parts.append(f"workspace_id = {mark()}")
             params.append(workspace_id)
-            idx += 1
         if owner_id:
-            where_parts.append(f"owner_id = ${idx}")
+            where_parts.append(f"owner_id = {mark()}")
             params.append(owner_id)
-            idx += 1
         if is_active is not None:
-            where_parts.append(f"is_active = ${idx}")
+            where_parts.append(f"is_active = {mark()}")
             params.append(is_active)
-            idx += 1
 
         where_clause = "WHERE " + " AND ".join(where_parts) if where_parts else ""
+        if pg:
+            total = self._fetch_val(
+                f"SELECT COUNT(*) FROM llm.llm_agents {where_clause}", tuple(params),
+            )
+            rows = self._fetch_all(
+                f"SELECT * FROM llm.llm_agents {where_clause} "
+                "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                tuple([*params, limit, offset]),
+            )
+            return [self._public_agent(row) for row in rows], total or 0
 
         total = await self._pool.fetchval(
             f"SELECT COUNT(*) FROM llm.llm_agents {where_clause}",
             *params,
         )
-
         count_params = list(params)
         count_params.extend([limit, offset])
         rows = await self._pool.fetch(
@@ -174,7 +242,7 @@ class LLMRepository:
             f"ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             *count_params,
         )
-        return [dict(r) for r in rows], total or 0
+        return [self._public_agent(dict(r)) for r in rows], total or 0
 
     async def seed_system_agents(self) -> None:
         """Идемпотентная вставка системных агентов Build и Plan."""
@@ -217,6 +285,20 @@ class LLMRepository:
         if self._log is not None:
             self._log.info("System agents seeded (build, plan)")
 
+    def _public_agent(self, row: dict[str, Any] | None) -> dict[str, Any]:
+        if not row:
+            return {}
+        data = dict(row)
+        for key in ("id", "workspace_id", "owner_id"):
+            if data.get(key) is not None:
+                data[key] = str(data[key])
+        for key in ("created_at", "updated_at"):
+            value = data.get(key)
+            iso = getattr(value, "isoformat", None)
+            if callable(iso):
+                data[key] = iso()
+        return data
+
     def _public_provider(self, row: dict[str, Any]) -> dict[str, Any]:
         data = dict(row)
         secret = data.pop("api_key", None)
@@ -240,6 +322,19 @@ class LLMRepository:
                 raw = cur.fetchone()
                 columns = [desc[0] for desc in cur.description] if cur.description else []
                 return dict(zip(columns, raw)) if raw else {}
+
+    def _fetch_val(self, sql: str, args: tuple[Any, ...] = ()) -> Any:
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, args)
+                raw = cur.fetchone()
+                return raw[0] if raw else None
+
+    def _execute(self, sql: str, args: tuple[Any, ...] = ()) -> str:
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, args)
+                return cur.statusmessage or "OK"
 
     async def create_provider(
         self,
