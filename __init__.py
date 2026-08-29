@@ -53,7 +53,7 @@ class LLMModule(ModuleBase):
     @property
     def meta(self) -> ModuleMeta:
         return ModuleMeta(
-            dependencies=["log", "db"],
+            dependencies=["log", "db", "workspace"],
             cache_rules={"get_providers": 300},
             timeout_defaults={"chat": 120.0, "create_agent": 10.0},
         )
@@ -74,7 +74,7 @@ class LLMModule(ModuleBase):
             from modules.db.provider import DatabaseProvider
 
             database = state.services.resolve(DatabaseProvider)
-            self._provider.bind_pool(database.pool)
+            self._provider.bind_runtime(state, database)
             from modules.auth.provider import AuthProvider
             from .schema import LLM_SCHEMA
 

@@ -86,6 +86,9 @@ class LLMProvider:
         self._config = config
         self._log = log
         self._repo: LLMRepository | None = None
+        self._system_repo: LLMRepository | None = None
+        self._database: Any = None
+        self._state: Any = None
         self._provider_registry = ProviderRegistry(log=log)
         self._init_providers()
 
@@ -118,6 +121,48 @@ class LLMProvider:
     def bind_pool(self, pool: Any) -> None:
         """Пул на воркере без повторного apply_schema."""
         self._repo = LLMRepository(pool, log=self._log)
+        self._system_repo = self._repo
+
+    def bind_runtime(self, state: Any, database: Any) -> None:
+        self._state = state
+        self._database = database
+        self.bind_pool(database.pool)
+
+    def _open_user_repo(self, user_id: str) -> LLMRepository:
+        from copy import deepcopy
+
+        from modules.workspace.schemas import user_dbname
+
+        if self._state is not None:
+            self._state.workspace(user=user_id)
+        dbname = user_dbname(user_id)
+        pool = self._database.get_pool(dbname)
+        self._database.register_schema(
+            "llm",
+            deepcopy(DB_SCHEMA),
+            schema_name="llm",
+            pool=pool,
+        )
+        with pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_llm_models_provider_model "
+                    "ON llm.llm_models (provider_id, model_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_llm_models_provider ON llm.llm_models (provider_id)"
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS idx_llm_providers_kind ON llm.llm_providers (kind)"
+                )
+        return LLMRepository(pool, log=self._log)
+
+    def _providers_repo(self, user_id: str | None) -> LLMRepository:
+        if user_id and self._database is not None and self._state is not None:
+            return self._open_user_repo(str(user_id))
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        return self._repo
 
     @task(type="database")
     async def initialize(self, state: Any) -> None:
@@ -143,6 +188,14 @@ class LLMProvider:
             auth = state.services.resolve(AuthProvider)
             if auth.registry is not None:
                 auth.registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
+            db_provider.execute(
+                "INSERT INTO auth.group_roles (group_id, role_id) "
+                "SELECT g.id, r.id FROM auth.groups g CROSS JOIN auth.roles r "
+                "WHERE g.name = %s AND r.name = %s "
+                "ON CONFLICT (group_id, role_id) DO NOTHING",
+                "Everyone",
+                "llm_user",
+            )
         except Exception as exc:
             if self._log is not None:
                 self._log.warning("llm_auth_schema_skipped", extra={"error": str(exc)})
@@ -377,14 +430,18 @@ class LLMProvider:
         api=True,
         permission="llm:config",
         name="list_providers",
-        description="Сохранённые провайдеры без секретов",
+        description="Свои провайдеры и расшаренные на группы",
         args={},
         return_type="dict",
     )
-    async def list_providers(self) -> dict[str, Any]:
-        if self._repo is None:
-            return {"items": []}
-        items = await self._repo.list_providers()
+    async def list_providers(self, _session_user_id: str | None = None) -> dict[str, Any]:
+        repo = self._providers_repo(_session_user_id)
+        items = await repo.list_providers()
+        for item in items:
+            item["owned"] = True
+            item["shared"] = False
+        if _session_user_id and self._system_repo is not None and self._state is not None:
+            items.extend(await self._shared_providers(str(_session_user_id), {str(row["id"]) for row in items}))
         return {"items": items}
 
     @task(
@@ -417,8 +474,7 @@ class LLMProvider:
         models: list[dict[str, Any]] | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
+        repo = self._providers_repo(_session_user_id)
         kind_norm = kind.strip().lower()
         vendor_norm = vendor.strip().lower()
         if kind_norm not in {"api_key", "oauth"}:
@@ -426,7 +482,7 @@ class LLMProvider:
         if kind_norm == "api_key" and base_url:
             _validate_base_url(base_url)
         try:
-            row = await self._repo.create_provider(
+            row = await repo.create_provider(
                 name=name.strip(),
                 kind=kind_norm,
                 vendor=vendor_norm,
@@ -476,8 +532,7 @@ class LLMProvider:
         description: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
+        repo = self._providers_repo(_session_user_id)
         spec = get_vendor(vendor)
         if spec is None:
             raise LLMError(
@@ -492,7 +547,7 @@ class LLMProvider:
         label = (name or "").strip() or spec.name
         blob = pack_device(device["device_code"], int(device["interval"]), int(device["expires_at"]))
         try:
-            row = await self._repo.create_provider(
+            row = await repo.create_provider(
                 name=label,
                 kind="oauth",
                 vendor=spec.id,
@@ -532,9 +587,8 @@ class LLMProvider:
         provider_id: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
-        row = await self._repo.get_provider(provider_id)
+        repo = self._providers_repo(_session_user_id)
+        row = await repo.get_provider(provider_id)
         if not row:
             raise NotFoundError("Provider")
         spec = get_vendor(str(row.get("vendor") or ""))
@@ -545,27 +599,27 @@ class LLMProvider:
             public = dict(row)
             public.pop("api_key", None)
             public["api_key_set"] = True
-            public["models"] = await self._repo.list_models(provider_id)
+            public["models"] = await repo.list_models(provider_id)
             return {"status": "connected", "provider": public}
         if not secret or secret.get("kind") != "device":
             raise LLMError("oauth session missing", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
         if int(secret.get("expires_at") or 0) and int(secret["expires_at"]) < int(time.time()):
-            await self._repo.set_oauth_state(provider_id, row.get("api_key") or "", "expired")
+            await repo.set_oauth_state(provider_id, row.get("api_key") or "", "expired")
             raise LLMError("device code expired", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
         result = await poll_device_token(spec, str(secret.get("device_code") or ""))
         status = result.get("status")
         if status == "pending" or status == "slow_down":
             return {"status": "pending", "interval": int(secret.get("interval") or 5)}
         if status == "expired":
-            await self._repo.set_oauth_state(provider_id, row.get("api_key") or "", "expired")
+            await repo.set_oauth_state(provider_id, row.get("api_key") or "", "expired")
             raise LLMError("device code expired", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
         if status == "denied":
-            await self._repo.set_oauth_state(provider_id, row.get("api_key") or "", "denied")
+            await repo.set_oauth_state(provider_id, row.get("api_key") or "", "denied")
             raise LLMError("access denied", "OAUTH_DENIED", human="Sign-in was denied")
         if status != "connected":
             raise LLMError(str(result.get("detail") or "oauth failed"), "OAUTH_DENIED", human="Could not finish sign-in")
         blob = pack_tokens(str(result["access"]), result.get("refresh"), int(result["expires_at"]))
-        public = await self._repo.set_oauth_state(provider_id, blob, "connected")
+        public = await repo.set_oauth_state(provider_id, blob, "connected")
         return {"status": "connected", "provider": public}
 
     @task(
@@ -582,9 +636,8 @@ class LLMProvider:
         provider_id: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
-        row = await self._repo.get_provider(provider_id)
+        repo = self._providers_repo(_session_user_id)
+        row = await repo.get_provider(provider_id)
         if not row:
             raise NotFoundError("Provider")
         token = bearer_from_stored(row.get("api_key"))
@@ -608,11 +661,12 @@ class LLMProvider:
         provider_id: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
-        deleted = await self._repo.delete_provider(provider_id)
+        repo = self._providers_repo(_session_user_id)
+        deleted = await repo.delete_provider(provider_id)
         if not deleted:
             raise NotFoundError("Provider")
+        if _session_user_id and self._system_repo is not None:
+            await self._system_repo.delete_shares_for_provider(str(_session_user_id), provider_id)
         return {"ok": True, "id": provider_id}
 
     @task(
@@ -641,10 +695,9 @@ class LLMProvider:
         models: list[dict[str, Any]] | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
+        repo = self._providers_repo(_session_user_id)
         key = api_key.strip() if isinstance(api_key, str) else ""
-        existing = await self._repo.get_provider(provider_id)
+        existing = await repo.get_provider(provider_id)
         if not existing:
             raise NotFoundError("Provider")
         oauth = str(existing.get("kind") or "") == "oauth"
@@ -654,7 +707,7 @@ class LLMProvider:
         if next_url:
             _validate_base_url(str(next_url))
         try:
-            row = await self._repo.update_provider(
+            row = await repo.update_provider(
                 provider_id=provider_id,
                 name=name.strip(),
                 description=(description or "").strip() or None,
@@ -684,9 +737,8 @@ class LLMProvider:
         model_id: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
-        deleted = await self._repo.delete_model(model_id)
+        repo = self._providers_repo(_session_user_id)
+        deleted = await repo.delete_model(model_id)
         if not deleted:
             raise NotFoundError("Model")
         return {"ok": True, "id": model_id}
@@ -720,10 +772,9 @@ class LLMProvider:
         return_type="dict",
     )
     async def refresh_catalog(self, _session_user_id: str | None = None) -> dict[str, Any]:
-        if self._repo is None:
-            return {"vanished": []}
+        repo = self._providers_repo(_session_user_id)
         vanished: list[dict[str, Any]] = []
-        for row in await self._repo.list_providers_with_secrets():
+        for row in await repo.list_providers_with_secrets():
             key = bearer_from_stored(row.get("api_key"))
             base = row.get("base_url")
             if not key or not base:
@@ -738,7 +789,7 @@ class LLMProvider:
                         extra={"provider_id": str(row.get("id")), "error": str(exc)},
                     )
                 continue
-            missing = await self._repo.replace_remote_models(str(row["id"]), remote)
+            missing = await repo.replace_remote_models(str(row["id"]), remote)
             for item in missing:
                 vanished.append(
                     {
@@ -765,9 +816,8 @@ class LLMProvider:
         enabled: bool,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
-        row = await self._repo.set_model_enabled(model_id, bool(enabled))
+        repo = self._providers_repo(_session_user_id)
+        row = await repo.set_model_enabled(model_id, bool(enabled))
         if not row:
             raise NotFoundError("Model")
         return row
@@ -787,12 +837,11 @@ class LLMProvider:
         display_name: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
+        repo = self._providers_repo(_session_user_id)
         name = (display_name or "").strip()
         if not name:
             raise LLMError("display_name required", "INVALID_NAME")
-        row = await self._repo.set_model_name(model_id, name)
+        row = await repo.set_model_name(model_id, name)
         if not row:
             raise NotFoundError("Model")
         return row
@@ -812,9 +861,8 @@ class LLMProvider:
         enabled: bool,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
-        count = await self._repo.set_provider_models_enabled(provider_id, bool(enabled))
+        repo = self._providers_repo(_session_user_id)
+        count = await repo.set_provider_models_enabled(provider_id, bool(enabled))
         return {"ok": True, "count": count, "enabled": bool(enabled)}
 
     @task(
@@ -833,15 +881,109 @@ class LLMProvider:
         reasoning_effort: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None:
-            raise LLMError("LLM not initialized (no DB pool)")
+        repo = self._providers_repo(_session_user_id)
         effort = (reasoning_effort or "medium").strip().lower()
         if effort not in {"none", "low", "medium", "high"}:
             effort = "medium"
-        row = await self._repo.set_model_reasoning(model_id, bool(reasoning_enabled), effort)
+        row = await repo.set_model_reasoning(model_id, bool(reasoning_enabled), effort)
         if not row:
             raise NotFoundError("Model")
         return row
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_share",
+        name="share_provider",
+        description="Расшарить своего провайдера на группу",
+        args={"provider_id": "str", "group_id": "str"},
+        return_type="dict",
+    )
+    async def share_provider(
+        self,
+        provider_id: str,
+        group_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not _session_user_id or self._system_repo is None:
+            raise LLMError("Authentication required", "AUTH_ERROR")
+        repo = self._providers_repo(_session_user_id)
+        row = await repo.get_provider(provider_id)
+        if not row:
+            raise NotFoundError("Provider")
+        share = await self._system_repo.insert_share(str(_session_user_id), provider_id, group_id)
+        return {"ok": True, "share": share}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_share",
+        name="unshare_provider",
+        description="Убрать шаринг провайдера с группы",
+        args={"provider_id": "str", "group_id": "str"},
+        return_type="dict",
+    )
+    async def unshare_provider(
+        self,
+        provider_id: str,
+        group_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not _session_user_id or self._system_repo is None:
+            raise LLMError("Authentication required", "AUTH_ERROR")
+        ok = await self._system_repo.delete_share(str(_session_user_id), provider_id, group_id)
+        if not ok:
+            raise NotFoundError("Share")
+        return {"ok": True}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="list_provider_shares",
+        description="Группы, на которые расшарен провайдер",
+        args={"provider_id": "str"},
+        return_type="dict",
+    )
+    async def list_provider_shares(
+        self,
+        provider_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if not _session_user_id or self._system_repo is None:
+            return {"items": []}
+        items = await self._system_repo.list_shares_for_provider(str(_session_user_id), provider_id)
+        return {"items": items}
+
+    async def _shared_providers(self, user_id: str, mine_ids: set[str]) -> list[dict[str, Any]]:
+        from modules.auth.provider import AuthProvider
+
+        auth = self._state.services.resolve(AuthProvider)
+        groups = await auth.get_user_groups(user_id)
+        group_ids = [str(item["id"]) for item in groups]
+        everyone = await self._system_repo.everyone_group_id()
+        if everyone:
+            group_ids.append(everyone)
+        shares = await self._system_repo.list_shares_for_groups(group_ids)
+        extra: list[dict[str, Any]] = []
+        seen = set(mine_ids)
+        for share in shares:
+            if str(share.get("owner_id")) == user_id:
+                continue
+            pid = str(share.get("provider_id"))
+            if pid in seen:
+                continue
+            owner_repo = self._open_user_repo(str(share["owner_id"]))
+            raw = await owner_repo.get_provider(pid)
+            if not raw:
+                continue
+            public = owner_repo._public_provider(raw)
+            public["models"] = await owner_repo.list_models(pid)
+            public["owned"] = False
+            public["shared"] = True
+            seen.add(pid)
+            extra.append(public)
+        return extra
 
     async def _fetch_remote_models(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
         import httpx

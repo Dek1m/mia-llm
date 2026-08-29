@@ -15,9 +15,21 @@ LLM_SCHEMA: dict[str, list[dict[str, Any]]] = {
         {"name": "llm:agent_manage", "description": "Создание/обновление/удаление агентов"},
         {"name": "llm:agent_list", "description": "Просмотр списка агентов и их информации"},
         {"name": "llm:config", "description": "Просмотр конфигурации провайдеров и моделей"},
-        {"name": "llm:provider_manage", "description": "Создание и настройка LLM-провайдеров"},
+        {"name": "llm:provider_manage", "description": "Создание и настройка своих LLM-провайдеров"},
+        {"name": "llm:provider_share", "description": "Расшарить своего провайдера на группу"},
     ],
     "roles": [
+        {
+            "name": "llm_user",
+            "description": "Свои провайдеры и чат",
+            "permissions": [
+                "llm:chat",
+                "llm:chat_stream",
+                "llm:agent_list",
+                "llm:config",
+                "llm:provider_manage",
+            ],
+        },
         {
             "name": "llm_operator",
             "description": "Оператор LLM: вызов чата и просмотр агентов",
@@ -29,7 +41,7 @@ LLM_SCHEMA: dict[str, list[dict[str, Any]]] = {
         },
         {
             "name": "llm_admin",
-            "description": "Полный контроль над LLM-модулем",
+            "description": "Полный контроль над LLM-модулем, шаринг провайдеров",
             "permissions": [
                 "llm:*",
             ],

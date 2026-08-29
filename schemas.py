@@ -20,7 +20,7 @@ DB_SCHEMA: dict[str, dict[str, Any]] = {
             "settings": "JSONB DEFAULT '{}'::jsonb",
             # UUID без FK: workspace.workspaces живёт в per-user БД, не в belle.
             "workspace_id": "UUID",
-            "owner_id": "UUID REFERENCES auth.users(id)",
+            "owner_id": "UUID",
             "is_active": "BOOLEAN DEFAULT TRUE",
             "created_at": "TIMESTAMPTZ DEFAULT NOW()",
             "updated_at": "TIMESTAMPTZ DEFAULT NOW()",

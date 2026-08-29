@@ -672,3 +672,101 @@ class LLMRepository:
             agent_type,
         )
         return result or 0
+
+    async def everyone_group_id(self) -> str | None:
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "SELECT id FROM auth.groups WHERE name = %s AND is_builtin = TRUE",
+                ("Everyone",),
+            )
+            value = row.get("id")
+            return str(value) if value else None
+        row = await self._pool.fetchrow(
+            "SELECT id FROM auth.groups WHERE name = $1 AND is_builtin = TRUE",
+            "Everyone",
+        )
+        if not row:
+            return None
+        value = dict(row).get("id")
+        return str(value) if value else None
+
+    async def insert_share(self, owner_id: str, provider_id: str, group_id: str) -> dict[str, Any]:
+        if self._psycopg_pool():
+            return self._fetch_one(
+                "INSERT INTO llm.provider_shares (owner_id, provider_id, group_id) "
+                "VALUES (%s, %s, %s) "
+                "ON CONFLICT (owner_id, provider_id, group_id) DO UPDATE SET owner_id = EXCLUDED.owner_id "
+                "RETURNING *",
+                (owner_id, provider_id, group_id),
+            )
+        row = await self._pool.fetchrow(
+            "INSERT INTO llm.provider_shares (owner_id, provider_id, group_id) "
+            "VALUES ($1, $2, $3) "
+            "ON CONFLICT (owner_id, provider_id, group_id) DO UPDATE SET owner_id = EXCLUDED.owner_id "
+            "RETURNING *",
+            owner_id,
+            provider_id,
+            group_id,
+        )
+        return dict(row) if row is not None else {}
+
+    async def delete_share(self, owner_id: str, provider_id: str, group_id: str) -> bool:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM llm.provider_shares "
+                        "WHERE owner_id = %s AND provider_id = %s AND group_id = %s",
+                        (owner_id, provider_id, group_id),
+                    )
+                    return cur.rowcount > 0
+        result = await self._pool.execute(
+            "DELETE FROM llm.provider_shares "
+            "WHERE owner_id = $1 AND provider_id = $2 AND group_id = $3",
+            owner_id,
+            provider_id,
+            group_id,
+        )
+        return bool(result) and "DELETE 0" not in str(result)
+
+    async def list_shares_for_provider(self, owner_id: str, provider_id: str) -> list[dict[str, Any]]:
+        if self._psycopg_pool():
+            return self._fetch_all(
+                "SELECT * FROM llm.provider_shares WHERE owner_id = %s AND provider_id = %s",
+                (owner_id, provider_id),
+            )
+        rows = await self._pool.fetch(
+            "SELECT * FROM llm.provider_shares WHERE owner_id = $1 AND provider_id = $2",
+            owner_id,
+            provider_id,
+        )
+        return [dict(row) for row in rows]
+
+    async def delete_shares_for_provider(self, owner_id: str, provider_id: str) -> None:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "DELETE FROM llm.provider_shares WHERE owner_id = %s AND provider_id = %s",
+                        (owner_id, provider_id),
+                    )
+            return
+        await self._pool.execute(
+            "DELETE FROM llm.provider_shares WHERE owner_id = $1 AND provider_id = $2",
+            owner_id,
+            provider_id,
+        )
+
+    async def list_shares_for_groups(self, group_ids: list[str]) -> list[dict[str, Any]]:
+        if not group_ids:
+            return []
+        if self._psycopg_pool():
+            return self._fetch_all(
+                "SELECT * FROM llm.provider_shares WHERE group_id = ANY(%s)",
+                (group_ids,),
+            )
+        rows = await self._pool.fetch(
+            "SELECT * FROM llm.provider_shares WHERE group_id = ANY($1::uuid[])",
+            group_ids,
+        )
+        return [dict(row) for row in rows]
