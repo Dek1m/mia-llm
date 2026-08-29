@@ -710,34 +710,30 @@ class LLMRepository:
         )
         return dict(row) if row is not None else {}
 
-    async def delete_share(self, owner_id: str, provider_id: str, group_id: str) -> bool:
+    async def delete_share(self, provider_id: str, group_id: str) -> bool:
         if self._psycopg_pool():
             with self._pool.connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
-                        "DELETE FROM llm.provider_shares "
-                        "WHERE owner_id = %s AND provider_id = %s AND group_id = %s",
-                        (owner_id, provider_id, group_id),
+                        "DELETE FROM llm.provider_shares WHERE provider_id = %s AND group_id = %s",
+                        (provider_id, group_id),
                     )
                     return cur.rowcount > 0
         result = await self._pool.execute(
-            "DELETE FROM llm.provider_shares "
-            "WHERE owner_id = $1 AND provider_id = $2 AND group_id = $3",
-            owner_id,
+            "DELETE FROM llm.provider_shares WHERE provider_id = $1 AND group_id = $2",
             provider_id,
             group_id,
         )
         return bool(result) and "DELETE 0" not in str(result)
 
-    async def list_shares_for_provider(self, owner_id: str, provider_id: str) -> list[dict[str, Any]]:
+    async def list_shares_for_provider(self, provider_id: str) -> list[dict[str, Any]]:
         if self._psycopg_pool():
             return self._fetch_all(
-                "SELECT * FROM llm.provider_shares WHERE owner_id = %s AND provider_id = %s",
-                (owner_id, provider_id),
+                "SELECT * FROM llm.provider_shares WHERE provider_id = %s",
+                (provider_id,),
             )
         rows = await self._pool.fetch(
-            "SELECT * FROM llm.provider_shares WHERE owner_id = $1 AND provider_id = $2",
-            owner_id,
+            "SELECT * FROM llm.provider_shares WHERE provider_id = $1",
             provider_id,
         )
         return [dict(row) for row in rows]
