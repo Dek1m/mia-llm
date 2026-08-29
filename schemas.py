@@ -26,6 +26,15 @@ DB_SCHEMA: dict[str, dict[str, Any]] = {
             "updated_at": "TIMESTAMPTZ DEFAULT NOW()",
         },
     },
+    "llm_agent_avatars": {
+        "auto_id": False,
+        "columns": {
+            "agent_id": "UUID PRIMARY KEY REFERENCES llm.llm_agents(id) ON DELETE CASCADE",
+            "bytes": "BYTEA NOT NULL",
+            "content_type": "VARCHAR(64) NOT NULL",
+            "updated_at": "TIMESTAMPTZ DEFAULT NOW()",
+        },
+    },
     "llm_providers": {
         "columns": {
             "name": "TEXT NOT NULL UNIQUE",

@@ -107,11 +107,17 @@ class LLMRepository:
             row = self._fetch_one(
                 "SELECT * FROM llm.llm_agents WHERE id = %s", (agent_id,),
             )
-            return self._public_agent(row) or None
+            if not row:
+                return None
+            stamped = await self._stamp_avatars([row])
+            return self._public_agent(stamped[0])
         row = await self._pool.fetchrow(
             "SELECT * FROM llm.llm_agents WHERE id = $1", agent_id,
         )
-        return self._public_agent(dict(row)) if row else None
+        if not row:
+            return None
+        stamped = await self._stamp_avatars([dict(row)])
+        return self._public_agent(stamped[0])
 
     async def get_agent_by_name(self, name: str) -> dict[str, Any] | None:
         if self._psycopg_pool():
@@ -229,7 +235,7 @@ class LLMRepository:
                 "ORDER BY created_at DESC LIMIT %s OFFSET %s",
                 tuple([*params, limit, offset]),
             )
-            return [self._public_agent(row) for row in rows], total or 0
+            return [self._public_agent(row) for row in await self._stamp_avatars(rows)], total or 0
 
         total = await self._pool.fetchval(
             f"SELECT COUNT(*) FROM llm.llm_agents {where_clause}",
@@ -242,7 +248,68 @@ class LLMRepository:
             f"ORDER BY created_at DESC LIMIT ${idx} OFFSET ${idx + 1}",
             *count_params,
         )
-        return [self._public_agent(dict(r)) for r in rows], total or 0
+        return [self._public_agent(row) for row in await self._stamp_avatars([dict(r) for r in rows])], total or 0
+
+    async def _stamp_avatars(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        ids = [str(row.get("id") or "") for row in rows if row.get("id")]
+        marked: set[str] = set()
+        if ids and self._psycopg_pool():
+            found = self._fetch_all(
+                "SELECT agent_id FROM llm.llm_agent_avatars WHERE agent_id = ANY(%s)",
+                (ids,),
+            )
+            marked = {str(item["agent_id"]) for item in found}
+        for row in rows:
+            row["has_avatar"] = str(row.get("id") or "") in marked
+        return rows
+
+    async def get_agent_avatar(self, agent_id: str) -> dict[str, Any] | None:
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "SELECT bytes, content_type FROM llm.llm_agent_avatars WHERE agent_id = %s",
+                (agent_id,),
+            )
+            return row or None
+        row = await self._pool.fetchrow(
+            "SELECT bytes, content_type FROM llm.llm_agent_avatars WHERE agent_id = $1",
+            agent_id,
+        )
+        return dict(row) if row else None
+
+    async def upsert_agent_avatar(self, agent_id: str, data: bytes, content_type: str) -> None:
+        if self._psycopg_pool():
+            existing = self._fetch_one(
+                "SELECT agent_id FROM llm.llm_agent_avatars WHERE agent_id = %s",
+                (agent_id,),
+            )
+            if existing:
+                self._execute(
+                    "UPDATE llm.llm_agent_avatars SET bytes = %s, content_type = %s, updated_at = NOW() "
+                    "WHERE agent_id = %s",
+                    (data, content_type, agent_id),
+                )
+                return
+            self._execute(
+                "INSERT INTO llm.llm_agent_avatars (agent_id, bytes, content_type) VALUES (%s, %s, %s)",
+                (agent_id, data, content_type),
+            )
+            return
+        await self._pool.execute(
+            "INSERT INTO llm.llm_agent_avatars (agent_id, bytes, content_type) "
+            "VALUES ($1, $2, $3) ON CONFLICT (agent_id) DO UPDATE SET "
+            "bytes = EXCLUDED.bytes, content_type = EXCLUDED.content_type, updated_at = NOW()",
+            agent_id, data, content_type,
+        )
+
+    async def delete_agent_avatar(self, agent_id: str) -> None:
+        if self._psycopg_pool():
+            self._execute(
+                "DELETE FROM llm.llm_agent_avatars WHERE agent_id = %s", (agent_id,),
+            )
+            return
+        await self._pool.execute(
+            "DELETE FROM llm.llm_agent_avatars WHERE agent_id = $1", agent_id,
+        )
 
     async def seed_system_agents(self) -> None:
         """Идемпотентная вставка системных агентов Build и Plan."""
@@ -297,6 +364,11 @@ class LLMRepository:
             iso = getattr(value, "isoformat", None)
             if callable(iso):
                 data[key] = iso()
+        agent_id = data.get("id")
+        if data.pop("has_avatar", False) and agent_id:
+            data["avatar_url"] = f"/api/v1/llm/agent_avatar?agent_id={agent_id}"
+        else:
+            data["avatar_url"] = None
         return data
 
     def _public_provider(self, row: dict[str, Any]) -> dict[str, Any]:

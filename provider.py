@@ -26,6 +26,7 @@ from .oauth import (
     unpack_secret,
 )
 from .secrets import encrypt_secret
+from modules.auth.validators import ForbiddenAvatarError, decode_avatar
 
 
 __all__ = ["LLMProvider"]
@@ -469,6 +470,53 @@ class LLMProvider:
             raise ForbiddenError("Cannot delete system agents")
 
         return await self._repo.delete_agent(agent_id)
+
+    @task(
+        type="cpu",
+        api=True,
+        permission="llm:agent_manage",
+        name="set_agent_avatar",
+        description="Загрузить аватар агента (jpeg/png/webp, не SVG, ≤256 KiB)",
+        args={"agent_id": "str", "image_b64": "str", "content_type": "str"},
+        return_type="dict",
+    )
+    async def set_agent_avatar(
+        self, agent_id: str, image_b64: str, content_type: str,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        row = await self._repo.get_agent(agent_id)
+        if not row:
+            raise NotFoundError("Agent")
+        try:
+            raw = decode_avatar(image_b64, content_type)
+        except ForbiddenAvatarError as exc:
+            raise ForbiddenError(str(exc)) from exc
+        mime = content_type.split(";")[0].strip().lower()
+        await self._repo.upsert_agent_avatar(agent_id, raw, mime)
+        return {"avatar_url": f"/api/v1/llm/agent_avatar?agent_id={agent_id}"}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_manage",
+        name="clear_agent_avatar",
+        args={"agent_id": "str"},
+        return_type="dict",
+    )
+    async def clear_agent_avatar(self, agent_id: str) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        await self._repo.delete_agent_avatar(agent_id)
+        return {"ok": True}
+
+    async def get_agent_avatar_bytes(self, agent_id: str) -> tuple[bytes, str] | None:
+        if self._repo is None:
+            return None
+        row = await self._repo.get_agent_avatar(agent_id)
+        if not row or row.get("bytes") is None:
+            return None
+        return bytes(row["bytes"]), str(row.get("content_type") or "application/octet-stream")
 
     # ── Providers ───────────────────────────────────────
 
