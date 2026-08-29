@@ -182,7 +182,7 @@ class LLMProvider:
             "llm",
             deepcopy(DB_SCHEMA),
             schema_name="llm",
-            ddl_dir="ddl",
+            ddl_dir=str(__import__("pathlib").Path(__file__).resolve().parent / "ddl"),
         )
         try:
             auth = state.services.resolve(AuthProvider)
