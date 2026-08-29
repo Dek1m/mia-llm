@@ -79,6 +79,8 @@ class LLMProvider:
     - Просмотр провайдеров и моделей
     """
 
+    _AGENT_KINDS = frozenset({"agent", "subagent", "cronagent", "user"})
+
     def __init__(self, config: LLMConfig, log: Any = None) -> None:
         self._config = config
         self._log = log
@@ -358,29 +360,36 @@ class LLMProvider:
     async def create_agent(
         self,
         name: str,
-        agent_type: str = "user",
+        agent_type: str = "agent",
         description: str | None = None,
         system_prompt: str | None = None,
         model: str | None = None,
         workspace_id: str | None = None,
         owner_id: str | None = None,
+        _session_user_id: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Создать агента."""
         if self._repo is None:
             raise LLMError("LLM not initialized (no DB pool)")
 
-        if agent_type == "system":
+        cleaned = (name or "").strip()
+        if not cleaned:
+            raise LLMError("Name is required", "VALIDATION", human="Name is required")
+        if agent_type == "system" or agent_type not in self._AGENT_KINDS:
             raise ForbiddenError("Cannot create system agents manually")
+        existing = await self._repo.get_agent_by_name(cleaned)
+        if existing:
+            raise LLMError("Agent already exists", "AGENT_EXISTS", human="Name already exists")
 
         row = await self._repo.create_agent(
-            name=name,
+            name=cleaned,
             agent_type=agent_type,
             description=description,
             system_prompt=system_prompt,
             model=model,
             workspace_id=workspace_id,
-            owner_id=owner_id,
+            owner_id=owner_id or _session_user_id,
         )
         return row
 
@@ -393,19 +402,48 @@ class LLMProvider:
         args={"agent_id": "str", "data": "dict"},
         return_type="dict",
     )
-    async def update_agent(self, agent_id: str, data: dict[str, Any]) -> dict[str, Any]:
+    async def update_agent(
+        self,
+        agent_id: str,
+        data: dict[str, Any] | None = None,
+        name: str | None = None,
+        agent_type: str | None = None,
+        description: str | None = None,
+        system_prompt: str | None = None,
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
         """Обновить агента."""
         if self._repo is None:
             raise LLMError("LLM not initialized (no DB pool)")
 
-        # Проверяем, не system ли агент
         row = await self._repo.get_agent(agent_id)
         if not row:
             raise NotFoundError("Agent")
         if row.get("agent_type") == "system":
             raise ForbiddenError("Cannot modify system agents")
 
-        result = await self._repo.update_agent(agent_id, data)
+        patch = dict(data or {})
+        for key, value in (
+            ("name", name),
+            ("agent_type", agent_type),
+            ("description", description),
+            ("system_prompt", system_prompt),
+            ("model", model),
+        ):
+            if value is not None:
+                patch[key] = value
+        if patch.get("agent_type") == "system":
+            raise ForbiddenError("Cannot modify system agents")
+        if patch.get("agent_type") and patch["agent_type"] not in self._AGENT_KINDS:
+            raise ForbiddenError("Unknown agent type")
+        if "name" in patch:
+            cleaned = str(patch["name"]).strip()
+            if not cleaned:
+                raise LLMError("Name is required", "VALIDATION", human="Name is required")
+            patch["name"] = cleaned
+
+        result = await self._repo.update_agent(agent_id, patch)
         if not result:
             raise NotFoundError("Agent")
         return result
