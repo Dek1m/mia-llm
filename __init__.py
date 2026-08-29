@@ -82,14 +82,19 @@ class LLMModule(ModuleBase):
             if auth.registry is not None:
                 auth.registry.register_sync("llm", LLM_SCHEMA, is_builtin=False)
         except Exception as exc:
-            self._log.warning("failed_to_register_llm_provider", error=str(exc))
+            self._log.warning(
+                "failed_to_register_llm_provider",
+                extra={"error": str(exc)},
+            )
         state.llm = self._provider
 
         self._log.info(
             "llm_module_loaded",
-            version=self.version,
-            default_provider=self._config.default_provider,
-            providers=list(self._provider.provider_registry.list_providers()),
+            extra={
+                "version": self.version,
+                "default_provider": self._config.default_provider,
+                "providers": list(self._provider.provider_registry.list_providers()),
+            },
         )
 
     def apply_schema(self, state: Any) -> None:

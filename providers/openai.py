@@ -4,9 +4,40 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from prometheus_client import REGISTRY, Counter, Histogram
+
 from .base import BaseProvider
 
 __all__ = ["OpenAIProvider"]
+
+
+def _counter(name: str, documentation: str, labelnames: list[str]) -> Counter:
+    existing = REGISTRY._names_to_collectors.get(name)
+    if existing is not None:
+        return existing  # type: ignore[return-value]
+    return Counter(name, documentation, labelnames)
+
+
+def _histogram(name: str, documentation: str) -> Histogram:
+    existing = REGISTRY._names_to_collectors.get(name)
+    if existing is not None:
+        return existing  # type: ignore[return-value]
+    return Histogram(
+        name,
+        documentation,
+        buckets=(0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0),
+    )
+
+
+llm_chat_total = _counter(
+    "llm_chat_total",
+    "Total LLM chat completions",
+    ["status"],
+)
+llm_chat_duration_seconds = _histogram(
+    "llm_chat_duration_seconds",
+    "LLM chat completion duration in seconds",
+)
 
 
 class OpenAIProvider(BaseProvider):
@@ -69,7 +100,10 @@ class OpenAIProvider(BaseProvider):
                 resp.raise_for_status()
                 data = resp.json()
         except Exception as exc:
-            duration_ms = round((time.monotonic() - started) * 1000, 1)
+            duration_s = time.monotonic() - started
+            duration_ms = round(duration_s * 1000, 1)
+            llm_chat_total.labels(status="error").inc()
+            llm_chat_duration_seconds.observe(duration_s)
             if self._log is not None:
                 self._log.error(
                     "llm_chat_failed",
@@ -81,7 +115,10 @@ class OpenAIProvider(BaseProvider):
                 )
             raise
 
-        duration_ms = round((time.monotonic() - started) * 1000, 1)
+        duration_s = time.monotonic() - started
+        duration_ms = round(duration_s * 1000, 1)
+        llm_chat_total.labels(status="ok").inc()
+        llm_chat_duration_seconds.observe(duration_s)
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         usage = data.get("usage") or {}

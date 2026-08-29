@@ -7,15 +7,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-
 from core.task_decorator import task
 
 from .config import LLMConfig
 from .repository import LLMRepository
 from .schema import LLM_SCHEMA
 from .schemas import DB_SCHEMA
-from .models import AgentInfo
-from .providers.base import BaseProvider
 from .providers.openai import OpenAIProvider
 from .providers.registry import ProviderRegistry
 from .oauth import (
@@ -251,6 +248,19 @@ class LLMProvider:
 
     # ── Chat ────────────────────────────────────────────
 
+    async def _chat(
+        self,
+        messages: list[dict[str, Any]],
+        model: str | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """Общий путь chat / chat_stream. Не через @task — без nested dispatch."""
+        return await self._provider_registry.chat_with_fallback(
+            messages=messages,
+            model=model,
+            **kwargs,
+        )
+
     @task(
         type="network",
         api=True,
@@ -268,11 +278,7 @@ class LLMProvider:
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Вызвать LLM через провайдер с fallback."""
-        return await self._provider_registry.chat_with_fallback(
-            messages=messages,
-            model=model,
-            **kwargs,
-        )
+        return await self._chat(messages, model=model, **kwargs)
 
     @task(
         type="network",
@@ -289,8 +295,8 @@ class LLMProvider:
         model: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
-        """Потоковый chat (заготовка — в первой итерации просто chat)."""
-        return await self.chat(messages=messages, model=model, **kwargs)
+        """Пока без SSE — тот же путь, что chat."""
+        return await self._chat(messages, model=model, **kwargs)
 
     # ── Agents ──────────────────────────────────────────
 
