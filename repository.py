@@ -223,6 +223,9 @@ class LLMRepository:
         data["api_key_set"] = bool(secret)
         return data
 
+    def _psycopg_pool(self) -> bool:
+        return hasattr(self._pool, "connection")
+
     async def create_provider(
         self,
         name: str,
@@ -233,22 +236,39 @@ class LLMRepository:
         api_key: str | None = None,
         oauth_status: str | None = None,
     ) -> dict[str, Any]:
+        args = (name, kind, vendor, base_url, default_model, api_key, oauth_status)
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO llm.llm_providers "
+                        "(name, kind, vendor, base_url, default_model, api_key, oauth_status) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                        args,
+                    )
+                    raw = cur.fetchone()
+                    columns = [desc[0] for desc in cur.description]
+                    row = dict(zip(columns, raw)) if raw else {}
+            return self._public_provider(row)
         row = await self._pool.fetchrow(
             "INSERT INTO llm.llm_providers "
             "(name, kind, vendor, base_url, default_model, api_key, oauth_status) "
             "VALUES ($1, $2, $3, $4, $5, $6, $7) "
             "RETURNING *",
-            name,
-            kind,
-            vendor,
-            base_url,
-            default_model,
-            api_key,
-            oauth_status,
+            *args,
         )
         return self._public_provider(dict(row) if row is not None else {})
 
     async def list_providers(self) -> list[dict[str, Any]]:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT 100"
+                    )
+                    columns = [desc[0] for desc in cur.description] if cur.description else []
+                    rows = [dict(zip(columns, item)) for item in cur.fetchall()]
+            return [self._public_provider(row) for row in rows]
         rows = await self._pool.fetch(
             "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT $1 OFFSET $2",
             100,
