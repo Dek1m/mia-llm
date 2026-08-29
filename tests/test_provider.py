@@ -98,10 +98,11 @@ class TestSchemaRegistration:
         assert "schema" in DB_SCHEMA
         assert DB_SCHEMA["schema"] == "llm"
         assert "llm_agents" in DB_SCHEMA
+        assert "llm_providers" in DB_SCHEMA
 
 
 class TestApiExport:
-    """@task(api=True) на LLMProvider: 8 методов, initialize без api."""
+    """@task(api=True) на LLMProvider: initialize без api."""
 
     def test_collect_from_module_exports_eight_api_methods(
         self, provider: LLMProvider,
@@ -111,7 +112,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 8
+        assert count == 11
         assert names == {
             "chat",
             "chat_stream",
@@ -121,6 +122,9 @@ class TestApiExport:
             "update_agent",
             "delete_agent",
             "get_providers",
+            "list_providers",
+            "create_provider",
+            "start_oauth",
         }
 
     def test_initialize_has_no_api_meta(self) -> None:
@@ -138,3 +142,22 @@ class TestApiExport:
             assert meta.required_permission, f"{meta.name} без permission"
             assert meta.required_permission.startswith("llm:")
             assert meta.public is False
+
+
+@pytest.mark.asyncio
+class TestSavedProviders:
+    async def test_create_api_key_hides_secret(self, provider: LLMProvider) -> None:
+        row = await provider.create_provider(
+            name="lab",
+            kind="api_key",
+            vendor="openai",
+            api_key="sk-secret",
+        )
+        assert row["name"] == "lab"
+        assert row["api_key_set"] is True
+        assert "api_key" not in row
+
+    async def test_start_oauth_grok_stub(self, provider: LLMProvider) -> None:
+        row = await provider.start_oauth("grok")
+        assert row["status"] == "stub"
+        assert row["vendor"] == "grok"

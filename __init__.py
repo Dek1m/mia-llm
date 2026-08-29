@@ -71,8 +71,13 @@ class LLMModule(ModuleBase):
         try:
             if hasattr(state, "services") and hasattr(state.services, "register"):
                 state.services.register(LLMProvider, self._provider)
+            from modules.db.provider import DatabaseProvider
+
+            database = state.services.resolve(DatabaseProvider)
+            self._provider.bind_pool(database.pool)
         except Exception as exc:
             self._log.warning("failed_to_register_llm_provider", error=str(exc))
+        state.llm = self._provider
 
         self._log.info(
             "llm_module_loaded",

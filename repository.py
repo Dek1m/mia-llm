@@ -217,6 +217,45 @@ class LLMRepository:
         if self._log is not None:
             self._log.info("System agents seeded (build, plan)")
 
+    def _public_provider(self, row: dict[str, Any]) -> dict[str, Any]:
+        data = dict(row)
+        secret = data.pop("api_key", None)
+        data["api_key_set"] = bool(secret)
+        return data
+
+    async def create_provider(
+        self,
+        name: str,
+        kind: str,
+        vendor: str,
+        base_url: str | None = None,
+        default_model: str | None = None,
+        api_key: str | None = None,
+        oauth_status: str | None = None,
+    ) -> dict[str, Any]:
+        row = await self._pool.fetchrow(
+            "INSERT INTO llm.llm_providers "
+            "(name, kind, vendor, base_url, default_model, api_key, oauth_status) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+            "RETURNING *",
+            name,
+            kind,
+            vendor,
+            base_url,
+            default_model,
+            api_key,
+            oauth_status,
+        )
+        return self._public_provider(dict(row) if row is not None else {})
+
+    async def list_providers(self) -> list[dict[str, Any]]:
+        rows = await self._pool.fetch(
+            "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+            100,
+            0,
+        )
+        return [self._public_provider(dict(row)) for row in rows]
+
     async def count_agents_by_type(self, agent_type: str) -> int:
         result = await self._pool.fetchval(
             "SELECT COUNT(*) FROM llm.llm_agents WHERE agent_type = $1",

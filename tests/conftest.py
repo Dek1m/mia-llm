@@ -203,7 +203,7 @@ class MockPool:
     def _detect_table(self, query: str) -> str:
         """Определяет имя таблицы из запроса."""
         for prefix in ["llm.", ""]:
-            for table in ["llm_agents"]:
+            for table in ["llm_agents", "llm_providers"]:
                 full = f"{prefix}{table}"
                 if full in query:
                     return full
@@ -212,6 +212,24 @@ class MockPool:
     def _handle_insert(self, table: str, query: str, args: tuple) -> _MockRow:
         """Обработка INSERT ... RETURNING *."""
         rows = self._ensure_table(table)
+
+        if "llm_providers" in table:
+            new_id = str(uuid.uuid4())
+            new_row = {
+                "id": new_id,
+                "name": args[0],
+                "kind": args[1],
+                "vendor": args[2],
+                "base_url": args[3],
+                "default_model": args[4],
+                "api_key": args[5],
+                "oauth_status": args[6] if len(args) > 6 else None,
+                "is_active": True,
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+            rows.append(new_row)
+            return _MockRow(new_row)
 
         if "ON CONFLICT" in query:
             name = args[0]

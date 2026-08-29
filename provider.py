@@ -82,6 +82,10 @@ class LLMProvider:
     def provider_registry(self) -> ProviderRegistry:
         return self._provider_registry
 
+    def bind_pool(self, pool: Any) -> None:
+        """Пул на воркере без повторного apply_schema."""
+        self._repo = LLMRepository(pool, log=self._log)
+
     @task(type="database")
     async def initialize(self, state: Any) -> None:
         """Регистрация БД-схемы и AUTH_SCHEMA."""
@@ -307,3 +311,87 @@ class LLMProvider:
             else:
                 p["healthy"] = False
         return providers
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:config",
+        name="list_providers",
+        description="Сохранённые провайдеры без секретов",
+        args={},
+        return_type="dict",
+    )
+    async def list_providers(self) -> dict[str, Any]:
+        if self._repo is None:
+            return {"items": []}
+        items = await self._repo.list_providers()
+        return {"items": items}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="create_provider",
+        description="Создать провайдера: api_key или oauth",
+        args={
+            "name": "str",
+            "kind": "str",
+            "vendor": "str",
+            "base_url": "str",
+            "default_model": "str",
+            "api_key": "str",
+        },
+        return_type="dict",
+    )
+    async def create_provider(
+        self,
+        name: str,
+        kind: str,
+        vendor: str,
+        base_url: str | None = None,
+        default_model: str | None = None,
+        api_key: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        kind_norm = kind.strip().lower()
+        vendor_norm = vendor.strip().lower()
+        if kind_norm not in {"api_key", "oauth"}:
+            raise LLMError("kind must be api_key or oauth", "INVALID_NAME")
+        if kind_norm == "oauth" and vendor_norm != "grok":
+            raise LLMError("oauth vendor: only grok for now", "INVALID_NAME")
+        row = await self._repo.create_provider(
+            name=name.strip(),
+            kind=kind_norm,
+            vendor=vendor_norm,
+            base_url=base_url,
+            default_model=default_model,
+            api_key=api_key,
+            oauth_status="pending" if kind_norm == "oauth" else None,
+        )
+        if self._log is not None:
+            self._log.info(
+                "llm_provider_created",
+                extra={"name": name, "kind": kind_norm, "vendor": vendor_norm},
+            )
+        return row
+
+    @task(
+        type="network",
+        api=True,
+        permission="llm:provider_manage",
+        name="start_oauth",
+        description="Начать OAuth провайдера (пока заглушка Grok)",
+        args={"vendor": "str"},
+        return_type="dict",
+    )
+    async def start_oauth(
+        self,
+        vendor: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        vendor_norm = vendor.strip().lower()
+        if vendor_norm != "grok":
+            raise LLMError("oauth vendor: only grok for now", "INVALID_NAME")
+        return {"vendor": "grok", "status": "stub"}

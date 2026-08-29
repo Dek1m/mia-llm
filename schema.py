@@ -15,6 +15,7 @@ LLM_SCHEMA: dict[str, list[dict[str, Any]]] = {
         {"name": "llm:agent_manage", "description": "Создание/обновление/удаление агентов"},
         {"name": "llm:agent_list", "description": "Просмотр списка агентов и их информации"},
         {"name": "llm:config", "description": "Просмотр конфигурации провайдеров и моделей"},
+        {"name": "llm:provider_manage", "description": "Создание и настройка LLM-провайдеров"},
     ],
     "roles": [
         {
