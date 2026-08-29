@@ -12,7 +12,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import os
+
 import pytest
+
+os.environ.setdefault("LLM_SECRETS_KEY", "test-llm-secrets")
 
 
 # ── Динамическая загрузка модуля llm ──────────────────

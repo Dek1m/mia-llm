@@ -455,6 +455,7 @@ class LLMRepository:
         description: str | None,
         base_url: str | None,
         api_key: str | None = None,
+        models: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         if self._psycopg_pool():
             if api_key:
@@ -471,6 +472,8 @@ class LLMRepository:
                 )
             if not row:
                 return {}
+            if models:
+                await self.upsert_models(provider_id, models)
             public = self._public_provider(row)
             public["models"] = await self.list_models(provider_id)
             return public
@@ -496,9 +499,78 @@ class LLMRepository:
         data = dict(row) if row is not None else {}
         if not data:
             return {}
+        if models:
+            await self.upsert_models(provider_id, models)
         public = self._public_provider(data)
         public["models"] = await self.list_models(provider_id)
         return public
+
+    async def upsert_models(self, provider_id: str, models: list[dict[str, Any]]) -> None:
+        if not models:
+            return
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    for item in models:
+                        cur.execute(
+                            "INSERT INTO llm.llm_models "
+                            "(provider_id, model_id, display_name, enabled, is_available, "
+                            "supports_reasoning, reasoning_enabled, reasoning_effort) "
+                            "VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s) "
+                            "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
+                            "display_name = EXCLUDED.display_name, "
+                            "enabled = EXCLUDED.enabled, "
+                            "supports_reasoning = EXCLUDED.supports_reasoning, "
+                            "reasoning_enabled = EXCLUDED.reasoning_enabled, "
+                            "reasoning_effort = EXCLUDED.reasoning_effort, "
+                            "is_available = TRUE, updated_at = NOW()",
+                            (
+                                provider_id,
+                                item["model_id"],
+                                item.get("display_name") or item["model_id"],
+                                bool(item.get("enabled", True)),
+                                bool(item.get("supports_reasoning", False)),
+                                bool(item.get("reasoning_enabled", False)),
+                                item.get("reasoning_effort"),
+                            ),
+                        )
+            return
+        for item in models:
+            await self._pool.fetchrow(
+                "INSERT INTO llm.llm_models "
+                "(provider_id, model_id, display_name, enabled, is_available, "
+                "supports_reasoning, reasoning_enabled, reasoning_effort) "
+                "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7) RETURNING *",
+                provider_id,
+                item["model_id"],
+                item.get("display_name") or item["model_id"],
+                bool(item.get("enabled", True)),
+                bool(item.get("supports_reasoning", False)),
+                bool(item.get("reasoning_enabled", False)),
+                item.get("reasoning_effort"),
+            )
+
+    def reencrypt_api_keys_sync(self) -> int:
+        from .secrets import encrypt_secret, is_encrypted
+
+        if not self._psycopg_pool():
+            return 0
+        rows = self._fetch_all(
+            "SELECT id, api_key FROM llm.llm_providers WHERE api_key IS NOT NULL AND api_key <> ''"
+        )
+        n = 0
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                for row in rows:
+                    stored = str(row.get("api_key") or "")
+                    if is_encrypted(stored):
+                        continue
+                    cur.execute(
+                        "UPDATE llm.llm_providers SET api_key = %s WHERE id = %s",
+                        (encrypt_secret(stored), row["id"]),
+                    )
+                    n += 1
+        return n
 
     async def set_model_name(self, model_uuid: str, display_name: str) -> dict[str, Any]:
         name = display_name.strip()

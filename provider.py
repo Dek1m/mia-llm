@@ -17,6 +17,7 @@ from .models import AgentInfo
 from .providers.base import BaseProvider
 from .providers.openai import OpenAIProvider
 from .providers.registry import ProviderRegistry
+from .secrets import decrypt_secret, encrypt_secret
 
 
 __all__ = ["LLMProvider"]
@@ -129,6 +130,7 @@ class LLMProvider:
                 db_provider.execute(
                     "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
                 )
+                self._repo.reencrypt_api_keys_sync()
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning("llm_providers_alter_failed", extra={"error": str(exc)})
@@ -398,7 +400,7 @@ class LLMProvider:
             description=(description or "").strip() or None,
             base_url=base_url.strip() if isinstance(base_url, str) else base_url,
             default_model=default_model,
-            api_key=api_key,
+            api_key=_cipher_key(api_key),
             oauth_status="pending" if kind_norm == "oauth" else None,
             models=models,
         )
@@ -463,6 +465,7 @@ class LLMProvider:
             "description": "str",
             "base_url": "str",
             "api_key": "str",
+            "models": "list",
         },
         return_type="dict",
     )
@@ -473,10 +476,14 @@ class LLMProvider:
         description: str | None = None,
         base_url: str | None = None,
         api_key: str | None = None,
+        models: list[dict[str, Any]] | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         if self._repo is None:
             raise LLMError("LLM not initialized (no DB pool)")
+        key = api_key.strip() if isinstance(api_key, str) else ""
+        if not key:
+            raise LLMError("API key is required", "INVALID_NAME")
         if base_url:
             _validate_base_url(base_url)
         row = await self._repo.update_provider(
@@ -484,7 +491,8 @@ class LLMProvider:
             name=name.strip(),
             description=(description or "").strip() or None,
             base_url=base_url.strip() if isinstance(base_url, str) and base_url.strip() else base_url,
-            api_key=api_key.strip() if isinstance(api_key, str) and api_key.strip() else None,
+            api_key=_cipher_key(key),
+            models=models,
         )
         if not row:
             raise NotFoundError("Provider")
@@ -544,7 +552,7 @@ class LLMProvider:
             return {"vanished": []}
         vanished: list[dict[str, Any]] = []
         for row in await self._repo.list_providers_with_secrets():
-            key = row.get("api_key")
+            key = decrypt_secret(row.get("api_key"))
             base = row.get("base_url")
             if not key or not base:
                 continue
@@ -682,6 +690,15 @@ class LLMProvider:
         except Exception as exc:
             raise LLMError("Wrong URL", "WRONG_URL") from exc
         return _parse_models(payload)
+
+
+def _cipher_key(api_key: str | None) -> str | None:
+    if not api_key:
+        return None
+    try:
+        return encrypt_secret(api_key)
+    except Exception as exc:
+        raise LLMError("secrets key is not configured", "SECRETS") from exc
 
 
 def _validate_base_url(base_url: str) -> str:
