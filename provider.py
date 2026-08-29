@@ -24,11 +24,32 @@ __all__ = ["LLMProvider"]
 
 
 class LLMError(Exception):
-    """Базовая ошибка LLM-модуля."""
+    """Базовая ошибка LLM-модуля. message — в лог, human — клиенту."""
 
-    def __init__(self, message: str, code: str = "LLM_ERROR") -> None:
+    def __init__(self, message: str, code: str = "LLM_ERROR", *, human: str | None = None) -> None:
         self.code = code
+        self.human = human or message
         super().__init__(message)
+
+
+def _is_duplicate_name(exc: BaseException) -> bool:
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        text = str(current).lower()
+        if "llm_providers_name_key" in text:
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _raise_duplicate_name(name: str, exc: BaseException) -> None:
+    raise LLMError(
+        f"duplicate provider name {name!r}: {exc}",
+        "DUPLICATE_NAME",
+        human="A provider with this name already exists",
+    ) from exc
 
 
 class NotFoundError(LLMError):
@@ -393,17 +414,22 @@ class LLMProvider:
             raise LLMError("kind must be api_key or oauth", "INVALID_NAME")
         if kind_norm == "api_key" and base_url:
             _validate_base_url(base_url)
-        row = await self._repo.create_provider(
-            name=name.strip(),
-            kind=kind_norm,
-            vendor=vendor_norm,
-            description=(description or "").strip() or None,
-            base_url=base_url.strip() if isinstance(base_url, str) else base_url,
-            default_model=default_model,
-            api_key=_cipher_key(api_key),
-            oauth_status="pending" if kind_norm == "oauth" else None,
-            models=models,
-        )
+        try:
+            row = await self._repo.create_provider(
+                name=name.strip(),
+                kind=kind_norm,
+                vendor=vendor_norm,
+                description=(description or "").strip() or None,
+                base_url=base_url.strip() if isinstance(base_url, str) else base_url,
+                default_model=default_model,
+                api_key=_cipher_key(api_key),
+                oauth_status="pending" if kind_norm == "oauth" else None,
+                models=models,
+            )
+        except Exception as exc:
+            if _is_duplicate_name(exc):
+                _raise_duplicate_name(name.strip(), exc)
+            raise
         if self._log is not None:
             self._log.info(
                 "llm_provider_created",
@@ -486,14 +512,19 @@ class LLMProvider:
             raise LLMError("API key is required", "INVALID_NAME")
         if base_url:
             _validate_base_url(base_url)
-        row = await self._repo.update_provider(
-            provider_id=provider_id,
-            name=name.strip(),
-            description=(description or "").strip() or None,
-            base_url=base_url.strip() if isinstance(base_url, str) and base_url.strip() else base_url,
-            api_key=_cipher_key(key),
-            models=models,
-        )
+        try:
+            row = await self._repo.update_provider(
+                provider_id=provider_id,
+                name=name.strip(),
+                description=(description or "").strip() or None,
+                base_url=base_url.strip() if isinstance(base_url, str) and base_url.strip() else base_url,
+                api_key=_cipher_key(key),
+                models=models,
+            )
+        except Exception as exc:
+            if _is_duplicate_name(exc):
+                _raise_duplicate_name(name.strip(), exc)
+            raise
         if not row:
             raise NotFoundError("Provider")
         return row
