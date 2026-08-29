@@ -596,6 +596,51 @@ class LLMProvider:
         type="database",
         api=True,
         permission="llm:provider_manage",
+        name="set_model_name",
+        description="Задать кастомное имя модели",
+        args={"model_id": "str", "display_name": "str"},
+        return_type="dict",
+    )
+    async def set_model_name(
+        self,
+        model_id: str,
+        display_name: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        name = (display_name or "").strip()
+        if not name:
+            raise LLMError("display_name required", "INVALID_NAME")
+        row = await self._repo.set_model_name(model_id, name)
+        if not row:
+            raise NotFoundError("Model")
+        return row
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="set_provider_models_enabled",
+        description="Включить или выключить все модели провайдера",
+        args={"provider_id": "str", "enabled": "bool"},
+        return_type="dict",
+    )
+    async def set_provider_models_enabled(
+        self,
+        provider_id: str,
+        enabled: bool,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        count = await self._repo.set_provider_models_enabled(provider_id, bool(enabled))
+        return {"ok": True, "count": count, "enabled": bool(enabled)}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
         name="set_model_reasoning",
         description="Включить reasoning и задать effort у модели",
         args={"model_id": "str", "reasoning_enabled": "bool", "reasoning_effort": "str"},

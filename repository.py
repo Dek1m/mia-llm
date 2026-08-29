@@ -500,6 +500,43 @@ class LLMRepository:
         public["models"] = await self.list_models(provider_id)
         return public
 
+    async def set_model_name(self, model_uuid: str, display_name: str) -> dict[str, Any]:
+        name = display_name.strip()
+        if self._psycopg_pool():
+            return self._fetch_one(
+                "UPDATE llm.llm_models SET display_name = %s, updated_at = NOW() "
+                "WHERE id = %s RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
+                "supports_reasoning, reasoning_enabled, reasoning_effort",
+                (name, model_uuid),
+            )
+        row = await self._pool.fetchrow(
+            "UPDATE llm.llm_models SET display_name = $1, updated_at = NOW() "
+            "WHERE id = $2 RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
+            "supports_reasoning, reasoning_enabled, reasoning_effort",
+            name,
+            model_uuid,
+        )
+        return dict(row) if row is not None else {}
+
+    async def set_provider_models_enabled(self, provider_id: str, enabled: bool) -> int:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE llm.llm_models SET enabled = %s, updated_at = NOW() "
+                        "WHERE provider_id = %s",
+                        (enabled, provider_id),
+                    )
+                    return cur.rowcount
+        result = await self._pool.execute(
+            "UPDATE llm.llm_models SET enabled = $1, updated_at = NOW() WHERE provider_id = $2",
+            enabled,
+            provider_id,
+        )
+        text = str(result or "")
+        parts = text.split()
+        return int(parts[-1]) if parts and parts[-1].isdigit() else 0
+
     async def delete_model(self, model_id: str) -> bool:
         if self._psycopg_pool():
             with self._pool.connection() as conn:
