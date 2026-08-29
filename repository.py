@@ -271,17 +271,24 @@ class LLMRepository:
                         for item in models:
                             cur.execute(
                                 "INSERT INTO llm.llm_models "
-                                "(provider_id, model_id, display_name, enabled, is_available) "
-                                "VALUES (%s, %s, %s, %s, TRUE) "
+                                "(provider_id, model_id, display_name, enabled, is_available, "
+                                "supports_reasoning, reasoning_enabled, reasoning_effort) "
+                                "VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s) "
                                 "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
                                 "display_name = EXCLUDED.display_name, "
                                 "enabled = EXCLUDED.enabled, "
+                                "supports_reasoning = EXCLUDED.supports_reasoning, "
+                                "reasoning_enabled = EXCLUDED.reasoning_enabled, "
+                                "reasoning_effort = EXCLUDED.reasoning_effort, "
                                 "is_available = TRUE, updated_at = NOW()",
                                 (
                                     provider_id,
                                     item["model_id"],
                                     item.get("display_name") or item["model_id"],
                                     bool(item.get("enabled", True)),
+                                    bool(item.get("supports_reasoning", False)),
+                                    bool(item.get("reasoning_enabled", False)),
+                                    item.get("reasoning_effort"),
                                 ),
                             )
             public = self._public_provider(row)
@@ -300,12 +307,16 @@ class LLMRepository:
             for item in models:
                 await self._pool.fetchrow(
                     "INSERT INTO llm.llm_models "
-                    "(provider_id, model_id, display_name, enabled, is_available) "
-                    "VALUES ($1, $2, $3, $4, TRUE) RETURNING *",
+                    "(provider_id, model_id, display_name, enabled, is_available, "
+                    "supports_reasoning, reasoning_enabled, reasoning_effort) "
+                    "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7) RETURNING *",
                     provider_id,
                     item["model_id"],
                     item.get("display_name") or item["model_id"],
                     bool(item.get("enabled", True)),
+                    bool(item.get("supports_reasoning", False)),
+                    bool(item.get("reasoning_enabled", False)),
+                    item.get("reasoning_effort"),
                 )
         public = self._public_provider(data)
         public["models"] = await self.list_models(str(provider_id)) if provider_id else []
@@ -314,12 +325,14 @@ class LLMRepository:
     async def list_models(self, provider_id: str) -> list[dict[str, Any]]:
         if self._psycopg_pool():
             return self._fetch_all(
-                "SELECT id, provider_id, model_id, display_name, enabled, is_available "
+                "SELECT id, provider_id, model_id, display_name, enabled, is_available, "
+                "supports_reasoning, reasoning_enabled, reasoning_effort "
                 "FROM llm.llm_models WHERE provider_id = %s ORDER BY display_name",
                 (provider_id,),
             )
         rows = await self._pool.fetch(
-            "SELECT id, provider_id, model_id, display_name, enabled, is_available "
+            "SELECT id, provider_id, model_id, display_name, enabled, is_available, "
+            "supports_reasoning, reasoning_enabled, reasoning_effort "
             "FROM llm.llm_models WHERE provider_id = $1 ORDER BY display_name",
             provider_id,
         )
@@ -396,17 +409,56 @@ class LLMRepository:
         if self._psycopg_pool():
             row = self._fetch_one(
                 "UPDATE llm.llm_models SET enabled = %s, updated_at = NOW() "
-                "WHERE id = %s RETURNING id, provider_id, model_id, display_name, enabled, is_available",
+                "WHERE id = %s RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
+                "supports_reasoning, reasoning_enabled, reasoning_effort",
                 (enabled, model_uuid),
             )
             return row
         row = await self._pool.fetchrow(
             "UPDATE llm.llm_models SET enabled = $1, updated_at = NOW() "
-            "WHERE id = $2 RETURNING id, provider_id, model_id, display_name, enabled, is_available",
+            "WHERE id = $2 RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
+            "supports_reasoning, reasoning_enabled, reasoning_effort",
             enabled,
             model_uuid,
         )
         return dict(row) if row is not None else {}
+
+    async def set_model_reasoning(
+        self,
+        model_uuid: str,
+        reasoning_enabled: bool,
+        reasoning_effort: str,
+    ) -> dict[str, Any]:
+        if self._psycopg_pool():
+            return self._fetch_one(
+                "UPDATE llm.llm_models SET reasoning_enabled = %s, reasoning_effort = %s, "
+                "updated_at = NOW() WHERE id = %s AND supports_reasoning = TRUE "
+                "RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
+                "supports_reasoning, reasoning_enabled, reasoning_effort",
+                (reasoning_enabled, reasoning_effort, model_uuid),
+            )
+        row = await self._pool.fetchrow(
+            "UPDATE llm.llm_models SET reasoning_enabled = $1, reasoning_effort = $2, "
+            "updated_at = NOW() WHERE id = $3 AND supports_reasoning = TRUE "
+            "RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
+            "supports_reasoning, reasoning_enabled, reasoning_effort",
+            reasoning_enabled,
+            reasoning_effort,
+            model_uuid,
+        )
+        return dict(row) if row is not None else {}
+
+    async def delete_provider(self, provider_id: str) -> bool:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM llm.llm_providers WHERE id = %s", (provider_id,))
+                    return cur.rowcount > 0
+        result = await self._pool.execute(
+            "DELETE FROM llm.llm_providers WHERE id = $1",
+            provider_id,
+        )
+        return bool(result) and "DELETE 0" not in str(result)
 
     async def count_agents_by_type(self, agent_type: str) -> int:
         result = await self._pool.fetchval(

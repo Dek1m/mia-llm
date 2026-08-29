@@ -118,6 +118,17 @@ class LLMProvider:
                 db_provider.execute(
                     "ALTER TABLE llm.llm_providers ADD COLUMN IF NOT EXISTS description TEXT",
                 )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_models "
+                    "ADD COLUMN IF NOT EXISTS supports_reasoning BOOLEAN NOT NULL DEFAULT FALSE",
+                )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_models "
+                    "ADD COLUMN IF NOT EXISTS reasoning_enabled BOOLEAN NOT NULL DEFAULT FALSE",
+                )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
+                )
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning("llm_providers_alter_failed", extra={"error": str(exc)})
@@ -378,8 +389,8 @@ class LLMProvider:
         vendor_norm = vendor.strip().lower()
         if kind_norm not in {"api_key", "oauth"}:
             raise LLMError("kind must be api_key or oauth", "INVALID_NAME")
-        if kind_norm == "oauth" and vendor_norm != "grok":
-            raise LLMError("oauth vendor: only grok for now", "INVALID_NAME")
+        if kind_norm == "api_key" and base_url:
+            _validate_base_url(base_url)
         row = await self._repo.create_provider(
             name=name.strip(),
             kind=kind_norm,
@@ -403,7 +414,7 @@ class LLMProvider:
         api=True,
         permission="llm:provider_manage",
         name="start_oauth",
-        description="Начать OAuth провайдера (пока заглушка Grok)",
+        description="Начать OAuth провайдера (нужен client_id приложения)",
         args={"vendor": "str"},
         return_type="dict",
     )
@@ -412,17 +423,33 @@ class LLMProvider:
         vendor: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        vendor_norm = vendor.strip().lower()
-        if vendor_norm != "grok":
-            raise LLMError("oauth vendor: only grok for now", "INVALID_NAME")
-        # Grok Build: browser PKCE на auth.x.ai или device-code.
-        # SPA не умеет loopback :port; без своего client_id полный поток не стартуем.
+        vendor_norm = (vendor or "oauth").strip().lower() or "oauth"
         return {
-            "vendor": "grok",
+            "vendor": vendor_norm,
             "status": "pending_client",
-            "authorize_hint": "auth.x.ai",
             "mode": "device_code",
         }
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="delete_provider",
+        description="Удалить провайдера, ключ и модели",
+        args={"provider_id": "str"},
+        return_type="dict",
+    )
+    async def delete_provider(
+        self,
+        provider_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        deleted = await self._repo.delete_provider(provider_id)
+        if not deleted:
+            raise NotFoundError("Provider")
+        return {"ok": True, "id": provider_id}
 
     @task(
         type="network",
@@ -439,8 +466,9 @@ class LLMProvider:
         api_key: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        ids = await self._fetch_remote_model_ids(base_url, api_key)
-        return {"items": [{"id": item, "name": item} for item in ids]}
+        _validate_base_url(base_url)
+        items = await self._fetch_remote_models(base_url, api_key)
+        return {"items": items}
 
     @task(
         type="network",
@@ -461,7 +489,8 @@ class LLMProvider:
             if not key or not base:
                 continue
             try:
-                remote = await self._fetch_remote_model_ids(str(base), str(key))
+                remote_items = await self._fetch_remote_models(str(base), str(key))
+                remote = [str(item["id"]) for item in remote_items]
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning(
@@ -503,7 +532,33 @@ class LLMProvider:
             raise NotFoundError("Model")
         return row
 
-    async def _fetch_remote_model_ids(self, base_url: str, api_key: str) -> list[str]:
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="set_model_reasoning",
+        description="Включить reasoning и задать effort у модели",
+        args={"model_id": "str", "reasoning_enabled": "bool", "reasoning_effort": "str"},
+        return_type="dict",
+    )
+    async def set_model_reasoning(
+        self,
+        model_id: str,
+        reasoning_enabled: bool,
+        reasoning_effort: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        effort = (reasoning_effort or "medium").strip().lower()
+        if effort not in {"none", "low", "medium", "high"}:
+            effort = "medium"
+        row = await self._repo.set_model_reasoning(model_id, bool(reasoning_enabled), effort)
+        if not row:
+            raise NotFoundError("Model")
+        return row
+
+    async def _fetch_remote_models(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
         import httpx
 
         url = _models_endpoint(base_url)
@@ -514,33 +569,76 @@ class LLMProvider:
             )
         if response.status_code >= 400:
             raise LLMError(f"models HTTP {response.status_code}", "UPSTREAM")
-        return _parse_model_ids(response.json())
+        return _parse_models(response.json())
+
+
+def _validate_base_url(base_url: str) -> str:
+    from urllib.parse import urlparse
+
+    raw = (base_url or "").strip()
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise LLMError("wrong url", "WRONG_URL")
+    return raw
 
 
 def _models_endpoint(base_url: str) -> str:
-    url = base_url.strip().rstrip("/")
+    url = _validate_base_url(base_url).rstrip("/")
     if url.endswith("/models"):
         return url
     return f"{url}/models"
 
 
-def _parse_model_ids(payload: Any) -> list[str]:
+def _parse_models(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
         raw = payload.get("data") or payload.get("models") or payload.get("items") or []
     elif isinstance(payload, list):
         raw = payload
     else:
         raw = []
-    ids: list[str] = []
+    items: list[dict[str, Any]] = []
     seen: set[str] = set()
     for item in raw:
+        extra: dict[str, Any] | None
         if isinstance(item, str):
             mid = item
+            extra = None
         elif isinstance(item, dict):
             mid = str(item.get("id") or item.get("name") or "")
+            extra = item
         else:
             mid = ""
-        if mid and mid not in seen:
-            seen.add(mid)
-            ids.append(mid)
-    return ids
+            extra = None
+        if not mid or mid in seen:
+            continue
+        seen.add(mid)
+        items.append(
+            {
+                "id": mid,
+                "name": mid,
+                "supports_reasoning": _supports_reasoning(mid, extra),
+            }
+        )
+    return items
+
+
+def _supports_reasoning(model_id: str, extra: dict[str, Any] | None) -> bool:
+    if extra:
+        if extra.get("supports_reasoning") is True or extra.get("reasoning") is True:
+            return True
+        caps = extra.get("capabilities")
+        if isinstance(caps, dict) and (caps.get("reasoning") or caps.get("thinking")):
+            return True
+    name = model_id.lower()
+    markers = (
+        "reasoning",
+        "think",
+        "-r1",
+        "o1",
+        "o3",
+        "o4",
+        "gpt-5",
+        "grok-3-mini",
+        "grok-4",
+    )
+    return any(marker in name for marker in markers)

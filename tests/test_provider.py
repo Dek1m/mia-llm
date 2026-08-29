@@ -114,7 +114,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 14
+        assert count == 16
         assert names == {
             "chat",
             "chat_stream",
@@ -130,6 +130,8 @@ class TestApiExport:
             "probe_models",
             "refresh_catalog",
             "set_model_enabled",
+            "delete_provider",
+            "set_model_reasoning",
         }
 
     def test_initialize_has_no_api_meta(self) -> None:
@@ -162,8 +164,8 @@ class TestSavedProviders:
         assert row["api_key_set"] is True
         assert "api_key" not in row
 
-    async def test_start_oauth_grok_stub(self, provider: LLMProvider) -> None:
-        row = await provider.start_oauth("grok")
+    async def test_start_oauth_pending_client(self, provider: LLMProvider) -> None:
+        row = await provider.start_oauth("acme")
         assert row["status"] == "pending_client"
-        assert row["vendor"] == "grok"
+        assert row["vendor"] == "acme"
         assert row["mode"] == "device_code"
