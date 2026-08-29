@@ -562,14 +562,21 @@ class LLMProvider:
         import httpx
 
         url = _models_endpoint(base_url)
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.get(
-                url,
-                headers={"Authorization": f"Bearer {api_key}"},
-            )
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.get(
+                    url,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+        except httpx.RequestError as exc:
+            raise LLMError("Wrong URL", "WRONG_URL") from exc
         if response.status_code >= 400:
-            raise LLMError(f"models HTTP {response.status_code}", "UPSTREAM")
-        return _parse_models(response.json())
+            raise LLMError("Wrong URL", "WRONG_URL")
+        try:
+            payload = response.json()
+        except Exception as exc:
+            raise LLMError("Wrong URL", "WRONG_URL") from exc
+        return _parse_models(payload)
 
 
 def _validate_base_url(base_url: str) -> str:
@@ -578,7 +585,7 @@ def _validate_base_url(base_url: str) -> str:
     raw = (base_url or "").strip()
     parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise LLMError("wrong url", "WRONG_URL")
+        raise LLMError("Wrong URL", "WRONG_URL")
     return raw
 
 
