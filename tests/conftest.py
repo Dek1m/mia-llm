@@ -173,6 +173,10 @@ class MockPool:
         table = self._detect_table(query)
         rows = self._ensure_table(table)
 
+        if "WHERE provider_id" in query:
+            filtered = [r for r in rows if str(r.get("provider_id")) == str(args[0])]
+            return [_MockRow(r) for r in filtered]
+
         # SELECT ... ORDER BY ... LIMIT ... OFFSET
         if "ORDER BY" in query:
             filtered = rows
@@ -203,7 +207,7 @@ class MockPool:
     def _detect_table(self, query: str) -> str:
         """Определяет имя таблицы из запроса."""
         for prefix in ["llm.", ""]:
-            for table in ["llm_agents", "llm_providers"]:
+            for table in ["llm_agents", "llm_providers", "llm_models"]:
                 full = f"{prefix}{table}"
                 if full in query:
                     return full
@@ -213,6 +217,21 @@ class MockPool:
         """Обработка INSERT ... RETURNING *."""
         rows = self._ensure_table(table)
 
+        if "llm_models" in table:
+            new_id = str(uuid.uuid4())
+            new_row = {
+                "id": new_id,
+                "provider_id": args[0],
+                "model_id": args[1],
+                "display_name": args[2],
+                "enabled": args[3] if len(args) > 3 else True,
+                "is_available": True,
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc),
+            }
+            rows.append(new_row)
+            return _MockRow(new_row)
+
         if "llm_providers" in table:
             new_id = str(uuid.uuid4())
             new_row = {
@@ -220,10 +239,11 @@ class MockPool:
                 "name": args[0],
                 "kind": args[1],
                 "vendor": args[2],
-                "base_url": args[3],
-                "default_model": args[4],
-                "api_key": args[5],
-                "oauth_status": args[6] if len(args) > 6 else None,
+                "description": args[3] if len(args) > 3 else None,
+                "base_url": args[4] if len(args) > 4 else None,
+                "default_model": args[5] if len(args) > 5 else None,
+                "api_key": args[6] if len(args) > 6 else None,
+                "oauth_status": args[7] if len(args) > 7 else None,
                 "is_active": True,
                 "created_at": datetime.now(timezone.utc),
                 "updated_at": datetime.now(timezone.utc),

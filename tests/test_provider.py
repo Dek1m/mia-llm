@@ -99,6 +99,8 @@ class TestSchemaRegistration:
         assert DB_SCHEMA["schema"] == "llm"
         assert "llm_agents" in DB_SCHEMA
         assert "llm_providers" in DB_SCHEMA
+        assert "llm_models" in DB_SCHEMA
+        assert "description" in DB_SCHEMA["llm_providers"]["columns"]
 
 
 class TestApiExport:
@@ -112,7 +114,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 11
+        assert count == 14
         assert names == {
             "chat",
             "chat_stream",
@@ -125,6 +127,9 @@ class TestApiExport:
             "list_providers",
             "create_provider",
             "start_oauth",
+            "probe_models",
+            "refresh_catalog",
+            "set_model_enabled",
         }
 
     def test_initialize_has_no_api_meta(self) -> None:
@@ -159,5 +164,6 @@ class TestSavedProviders:
 
     async def test_start_oauth_grok_stub(self, provider: LLMProvider) -> None:
         row = await provider.start_oauth("grok")
-        assert row["status"] == "stub"
+        assert row["status"] == "pending_client"
         assert row["vendor"] == "grok"
+        assert row["mode"] == "device_code"

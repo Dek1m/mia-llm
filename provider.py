@@ -113,6 +113,14 @@ class LLMProvider:
         except Exception as exc:
             if self._log is not None:
                 self._log.warning("llm_auth_schema_skipped", extra={"error": str(exc)})
+        if self._repo is not None:
+            try:
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_providers ADD COLUMN IF NOT EXISTS description TEXT",
+                )
+            except Exception as exc:
+                if self._log is not None:
+                    self._log.warning("llm_providers_alter_failed", extra={"error": str(exc)})
         self._repo.seed_system_agents_sync()
         if self._log is not None:
             self._log.info("LLM schema registered, system agents seeded")
@@ -344,9 +352,11 @@ class LLMProvider:
             "name": "str",
             "kind": "str",
             "vendor": "str",
+            "description": "str",
             "base_url": "str",
             "default_model": "str",
             "api_key": "str",
+            "models": "list",
         },
         return_type="dict",
     )
@@ -355,9 +365,11 @@ class LLMProvider:
         name: str,
         kind: str,
         vendor: str,
+        description: str | None = None,
         base_url: str | None = None,
         default_model: str | None = None,
         api_key: str | None = None,
+        models: list[dict[str, Any]] | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         if self._repo is None:
@@ -372,10 +384,12 @@ class LLMProvider:
             name=name.strip(),
             kind=kind_norm,
             vendor=vendor_norm,
-            base_url=base_url,
+            description=(description or "").strip() or None,
+            base_url=base_url.strip() if isinstance(base_url, str) else base_url,
             default_model=default_model,
             api_key=api_key,
             oauth_status="pending" if kind_norm == "oauth" else None,
+            models=models,
         )
         if self._log is not None:
             self._log.info(
@@ -401,4 +415,132 @@ class LLMProvider:
         vendor_norm = vendor.strip().lower()
         if vendor_norm != "grok":
             raise LLMError("oauth vendor: only grok for now", "INVALID_NAME")
-        return {"vendor": "grok", "status": "stub"}
+        # Grok Build: browser PKCE на auth.x.ai или device-code.
+        # SPA не умеет loopback :port; без своего client_id полный поток не стартуем.
+        return {
+            "vendor": "grok",
+            "status": "pending_client",
+            "authorize_hint": "auth.x.ai",
+            "mode": "device_code",
+        }
+
+    @task(
+        type="network",
+        api=True,
+        permission="llm:provider_manage",
+        name="probe_models",
+        description="GET {base}/models по OpenAI-совместимому URL",
+        args={"base_url": "str", "api_key": "str"},
+        return_type="dict",
+    )
+    async def probe_models(
+        self,
+        base_url: str,
+        api_key: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        ids = await self._fetch_remote_model_ids(base_url, api_key)
+        return {"items": [{"id": item, "name": item} for item in ids]}
+
+    @task(
+        type="network",
+        api=True,
+        permission="llm:config",
+        name="refresh_catalog",
+        description="Сверить сохранённые модели с вендором; пропавшие — в vanished",
+        args={},
+        return_type="dict",
+    )
+    async def refresh_catalog(self, _session_user_id: str | None = None) -> dict[str, Any]:
+        if self._repo is None:
+            return {"vanished": []}
+        vanished: list[dict[str, Any]] = []
+        for row in await self._repo.list_providers_with_secrets():
+            key = row.get("api_key")
+            base = row.get("base_url")
+            if not key or not base:
+                continue
+            try:
+                remote = await self._fetch_remote_model_ids(str(base), str(key))
+            except Exception as exc:
+                if self._log is not None:
+                    self._log.warning(
+                        "llm_catalog_refresh_failed",
+                        extra={"provider_id": str(row.get("id")), "error": str(exc)},
+                    )
+                continue
+            missing = await self._repo.replace_remote_models(str(row["id"]), remote)
+            for item in missing:
+                vanished.append(
+                    {
+                        "provider_id": str(row["id"]),
+                        "provider_name": row.get("name"),
+                        "model_id": item.get("model_id"),
+                        "display_name": item.get("display_name"),
+                    }
+                )
+        return {"vanished": vanished}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:provider_manage",
+        name="set_model_enabled",
+        description="Включить или выключить модель провайдера",
+        args={"model_id": "str", "enabled": "bool"},
+        return_type="dict",
+    )
+    async def set_model_enabled(
+        self,
+        model_id: str,
+        enabled: bool,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None:
+            raise LLMError("LLM not initialized (no DB pool)")
+        row = await self._repo.set_model_enabled(model_id, bool(enabled))
+        if not row:
+            raise NotFoundError("Model")
+        return row
+
+    async def _fetch_remote_model_ids(self, base_url: str, api_key: str) -> list[str]:
+        import httpx
+
+        url = _models_endpoint(base_url)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {api_key}"},
+            )
+        if response.status_code >= 400:
+            raise LLMError(f"models HTTP {response.status_code}", "UPSTREAM")
+        return _parse_model_ids(response.json())
+
+
+def _models_endpoint(base_url: str) -> str:
+    url = base_url.strip().rstrip("/")
+    if url.endswith("/models"):
+        return url
+    return f"{url}/models"
+
+
+def _parse_model_ids(payload: Any) -> list[str]:
+    if isinstance(payload, dict):
+        raw = payload.get("data") or payload.get("models") or payload.get("items") or []
+    elif isinstance(payload, list):
+        raw = payload
+    else:
+        raw = []
+    ids: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        if isinstance(item, str):
+            mid = item
+        elif isinstance(item, dict):
+            mid = str(item.get("id") or item.get("name") or "")
+        else:
+            mid = ""
+        if mid and mid not in seen:
+            seen.add(mid)
+            ids.append(mid)
+    return ids

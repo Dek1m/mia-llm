@@ -226,55 +226,187 @@ class LLMRepository:
     def _psycopg_pool(self) -> bool:
         return hasattr(self._pool, "connection")
 
+    def _fetch_all(self, sql: str, args: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, args)
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                return [dict(zip(columns, item)) for item in cur.fetchall()]
+
+    def _fetch_one(self, sql: str, args: tuple[Any, ...]) -> dict[str, Any]:
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, args)
+                raw = cur.fetchone()
+                columns = [desc[0] for desc in cur.description] if cur.description else []
+                return dict(zip(columns, raw)) if raw else {}
+
     async def create_provider(
         self,
         name: str,
         kind: str,
         vendor: str,
+        description: str | None = None,
         base_url: str | None = None,
         default_model: str | None = None,
         api_key: str | None = None,
         oauth_status: str | None = None,
+        models: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        args = (name, kind, vendor, base_url, default_model, api_key, oauth_status)
+        args = (name, kind, vendor, description, base_url, default_model, api_key, oauth_status)
         if self._psycopg_pool():
             with self._pool.connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute(
                         "INSERT INTO llm.llm_providers "
-                        "(name, kind, vendor, base_url, default_model, api_key, oauth_status) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                        "(name, kind, vendor, description, base_url, default_model, api_key, oauth_status) "
+                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                         args,
                     )
                     raw = cur.fetchone()
                     columns = [desc[0] for desc in cur.description]
                     row = dict(zip(columns, raw)) if raw else {}
-            return self._public_provider(row)
+                    provider_id = row.get("id")
+                    if provider_id and models:
+                        for item in models:
+                            cur.execute(
+                                "INSERT INTO llm.llm_models "
+                                "(provider_id, model_id, display_name, enabled, is_available) "
+                                "VALUES (%s, %s, %s, %s, TRUE) "
+                                "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
+                                "display_name = EXCLUDED.display_name, "
+                                "enabled = EXCLUDED.enabled, "
+                                "is_available = TRUE, updated_at = NOW()",
+                                (
+                                    provider_id,
+                                    item["model_id"],
+                                    item.get("display_name") or item["model_id"],
+                                    bool(item.get("enabled", True)),
+                                ),
+                            )
+            public = self._public_provider(row)
+            public["models"] = await self.list_models(str(row.get("id")))
+            return public
         row = await self._pool.fetchrow(
             "INSERT INTO llm.llm_providers "
-            "(name, kind, vendor, base_url, default_model, api_key, oauth_status) "
-            "VALUES ($1, $2, $3, $4, $5, $6, $7) "
+            "(name, kind, vendor, description, base_url, default_model, api_key, oauth_status) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7, $8) "
             "RETURNING *",
             *args,
         )
-        return self._public_provider(dict(row) if row is not None else {})
+        data = dict(row) if row is not None else {}
+        provider_id = data.get("id")
+        if provider_id and models:
+            for item in models:
+                await self._pool.fetchrow(
+                    "INSERT INTO llm.llm_models "
+                    "(provider_id, model_id, display_name, enabled, is_available) "
+                    "VALUES ($1, $2, $3, $4, TRUE) RETURNING *",
+                    provider_id,
+                    item["model_id"],
+                    item.get("display_name") or item["model_id"],
+                    bool(item.get("enabled", True)),
+                )
+        public = self._public_provider(data)
+        public["models"] = await self.list_models(str(provider_id)) if provider_id else []
+        return public
+
+    async def list_models(self, provider_id: str) -> list[dict[str, Any]]:
+        if self._psycopg_pool():
+            return self._fetch_all(
+                "SELECT id, provider_id, model_id, display_name, enabled, is_available "
+                "FROM llm.llm_models WHERE provider_id = %s ORDER BY display_name",
+                (provider_id,),
+            )
+        rows = await self._pool.fetch(
+            "SELECT id, provider_id, model_id, display_name, enabled, is_available "
+            "FROM llm.llm_models WHERE provider_id = $1 ORDER BY display_name",
+            provider_id,
+        )
+        return [dict(row) for row in rows]
 
     async def list_providers(self) -> list[dict[str, Any]]:
         if self._psycopg_pool():
+            rows = self._fetch_all(
+                "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT 100"
+            )
+        else:
+            fetched = await self._pool.fetch(
+                "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                100,
+                0,
+            )
+            rows = [dict(row) for row in fetched]
+        items = [self._public_provider(row) for row in rows]
+        for item in items:
+            item["models"] = await self.list_models(str(item["id"]))
+        return items
+
+    async def list_providers_with_secrets(self) -> list[dict[str, Any]]:
+        if self._psycopg_pool():
+            rows = self._fetch_all(
+                "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT 100"
+            )
+        else:
+            fetched = await self._pool.fetch(
+                "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                100,
+                0,
+            )
+            rows = [dict(row) for row in fetched]
+        return rows
+
+    async def replace_remote_models(
+        self,
+        provider_id: str,
+        remote_ids: list[str],
+    ) -> list[dict[str, Any]]:
+        """Сверить каталог. Возвращает enabled-модели, которых больше нет у вендора."""
+        vanished: list[dict[str, Any]] = []
+        stored = await self.list_models(provider_id)
+        remote = set(remote_ids)
+        if self._psycopg_pool():
             with self._pool.connection() as conn:
                 with conn.cursor() as cur:
-                    cur.execute(
-                        "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT 100"
-                    )
-                    columns = [desc[0] for desc in cur.description] if cur.description else []
-                    rows = [dict(zip(columns, item)) for item in cur.fetchall()]
-            return [self._public_provider(row) for row in rows]
-        rows = await self._pool.fetch(
-            "SELECT * FROM llm.llm_providers ORDER BY created_at DESC LIMIT $1 OFFSET $2",
-            100,
-            0,
+                    for item in stored:
+                        if item["model_id"] not in remote:
+                            if item.get("enabled"):
+                                vanished.append(item)
+                            cur.execute(
+                                "UPDATE llm.llm_models SET is_available = FALSE, updated_at = NOW() "
+                                "WHERE id = %s",
+                                (item["id"],),
+                            )
+                    for model_id in remote_ids:
+                        cur.execute(
+                            "INSERT INTO llm.llm_models "
+                            "(provider_id, model_id, display_name, enabled, is_available) "
+                            "VALUES (%s, %s, %s, FALSE, TRUE) "
+                            "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
+                            "is_available = TRUE, updated_at = NOW()",
+                            (provider_id, model_id, model_id),
+                        )
+        else:
+            for item in stored:
+                if item["model_id"] not in remote and item.get("enabled"):
+                    vanished.append(item)
+        return vanished
+
+    async def set_model_enabled(self, model_uuid: str, enabled: bool) -> dict[str, Any]:
+        if self._psycopg_pool():
+            row = self._fetch_one(
+                "UPDATE llm.llm_models SET enabled = %s, updated_at = NOW() "
+                "WHERE id = %s RETURNING id, provider_id, model_id, display_name, enabled, is_available",
+                (enabled, model_uuid),
+            )
+            return row
+        row = await self._pool.fetchrow(
+            "UPDATE llm.llm_models SET enabled = $1, updated_at = NOW() "
+            "WHERE id = $2 RETURNING id, provider_id, model_id, display_name, enabled, is_available",
+            enabled,
+            model_uuid,
         )
-        return [self._public_provider(dict(row)) for row in rows]
+        return dict(row) if row is not None else {}
 
     async def count_agents_by_type(self, agent_type: str) -> int:
         result = await self._pool.fetchval(
