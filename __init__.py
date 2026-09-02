@@ -56,6 +56,10 @@ class LLMModule(ModuleBase):
             dependencies=["log", "db", "workspace"],
             cache_rules={"get_providers": 300},
             timeout_defaults={"chat": 120.0, "create_agent": 10.0},
+            load_on="all",
+            is_system=False,
+            display_name="LLM",
+            is_example=False,
         )
 
     def __init__(self, config: LLMConfig | None = None) -> None:

@@ -1,22 +1,24 @@
 {
   "version": "1.0.0",
   "files": {
-    "__init__.py": "75df937c10ee89d659d1b00b9ad0488c367c8fe8e738d5b5e4189f95f933ea79",
+    "__init__.py": "ff77d9afc89e24b67310066f9ad0565a5853a02aeb6b640ff29539406146f406",
     "config.py": "1d26709c8f7b683116a8c5dc756387ccdd337ec38838e6e153bad26215f2c64d",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
-    "provider.py": "2c6d9bcdc06272891ce9dd75227877ec67a9f6733a2dc9f96ad86a3d5eeb7dfe",
+    "oauth.py": "87c0fcb4938bb11d4d74314fb741713c16f256af72c68c611e8341eee75666de",
+    "provider.py": "c636faf43cfc2ddc684441bbf80cbf583f8fa59dd4e666b46c985778ae3c0c63",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
     "providers/openai.py": "cfc81048efddb3226a21f43a5bf361e8dd6d6c90b4e3596f1952264204c2a7b5",
     "providers/registry.py": "a6e0710e856de8e16f3e9b8e4b4dbe67ecbe31f91ba41e9dc5061f2887db6c39",
-    "repository.py": "65520cdc7b7266cd99165d3f57d428e60452b8c3394fd276e3837e5a8045ccf3",
-    "schema.py": "33f0e109868d487c321fc95e33bd9d246778f4abe52fb05093753964121c133e",
-    "schemas.py": "cdad1fe50853de3cfe82318ce37e4b292e64c2abe8326880182cb196a0359b5f",
+    "repository.py": "0b4752781ff4554888948030da1d81578277267600c60fcb96911a512da9537e",
+    "schema.py": "5a61f985cae68ab1c874a1dfc440c0806572f72e196c4ac0e04d4f2094bb71ce",
+    "schemas.py": "8a55fbb1bac0e3569fb773553121f4adb4df7d3b47ece1164129b51807825927",
+    "secrets.py": "7ecd41db715fba98ba035dd2e6cfe8505e1fa25e2a5fea825e7fed95e9b22fb9",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "tests/conftest.py": "85996792c722c4cad3967fec4e81f3cecdb0753120e1cc72f95b8c972d2e6f51",
+    "tests/conftest.py": "5598c99d0ee9e846e2d454ca269d84c13fdfffd68f89ffe3c12a796f752d3f85",
     "tests/test_agents.py": "c2e344f7e384b72df1254fa60297d271070332da6b5f0df4f3402b7f732ca40e",
-    "tests/test_provider.py": "3f213627622c25f8367fe50ce33316aa671d18c90363e3b43c7393aa04e5516f",
+    "tests/test_provider.py": "e86f9021d6cade52428eeb1d9db77cf930fb5db5c103f2e7e9e8c2628c8f412d",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "d0f987781c530d3452c019e68613e1a908e42f2333c0de2b9f1b6d3ee0153b14"
+  "manifest_hash": "476c40dd9325b5713ef0fe22edc242238cc710590eaf8245fe01420abefaa5b1"
 }
