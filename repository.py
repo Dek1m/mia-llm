@@ -130,6 +130,14 @@ class LLMRepository:
         )
         return self._public_agent(dict(row)) if row else None
 
+    async def clear_agent_defaults(self) -> None:
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE llm.llm_agents SET is_default = FALSE WHERE is_default = TRUE")
+            return
+        await self._pool.execute("UPDATE llm.llm_agents SET is_default = FALSE WHERE is_default = TRUE")
+
     async def update_agent(
         self, agent_id: str, data: dict[str, Any],
     ) -> dict[str, Any] | None:
@@ -139,6 +147,7 @@ class LLMRepository:
         allowed = {
             "name", "agent_type", "description", "system_prompt", "model",
             "settings", "workspace_id", "owner_id", "is_active",
+            "is_visible", "is_default",
         }
         set_parts = []
         params: list[Any] = []

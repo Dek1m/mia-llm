@@ -244,6 +244,12 @@ class LLMProvider:
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
                 )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_visible BOOLEAN NOT NULL DEFAULT TRUE",
+                )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE",
+                )
                 self._repo.reencrypt_api_keys_sync()
             except Exception as exc:
                 if self._log is not None:
@@ -403,7 +409,13 @@ class LLMProvider:
         permission="llm:agent_manage",
         name="update_agent",
         description="Обновить агента",
-        args={"agent_id": "str", "data": "dict", "is_active": "bool"},
+        args={
+            "agent_id": "str",
+            "data": "dict",
+            "is_active": "bool",
+            "is_visible": "bool",
+            "is_default": "bool",
+        },
         return_type="dict",
     )
     async def update_agent(
@@ -416,6 +428,8 @@ class LLMProvider:
         system_prompt: str | None = None,
         model: str | None = None,
         is_active: bool | None = None,
+        is_visible: bool | None = None,
+        is_default: bool | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Обновить агента."""
@@ -434,10 +448,13 @@ class LLMProvider:
             ("system_prompt", system_prompt),
             ("model", model),
             ("is_active", is_active),
+            ("is_visible", is_visible),
+            ("is_default", is_default),
         ):
             if value is not None:
                 patch[key] = value
-        if row.get("agent_type") == "system" and set(patch) - {"is_active"}:
+        flags = {"is_active", "is_visible", "is_default"}
+        if row.get("agent_type") == "system" and set(patch) - flags:
             raise ForbiddenError("Cannot modify system agents")
         if patch.get("agent_type") == "system":
             raise ForbiddenError("Cannot modify system agents")
@@ -449,6 +466,8 @@ class LLMProvider:
                 raise LLMError("Name is required", "VALIDATION", human="Name is required")
             patch["name"] = cleaned
 
+        if patch.get("is_default") is True:
+            await self._repo.clear_agent_defaults()
         result = await self._repo.update_agent(agent_id, patch)
         if not result:
             raise NotFoundError("Agent")

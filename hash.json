@@ -5,14 +5,14 @@
     "config.py": "97ab817a1f95428ffdb3e18168b42f89367aa1a5ae380392d251e05beaaf5368",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "87c0fcb4938bb11d4d74314fb741713c16f256af72c68c611e8341eee75666de",
-    "provider.py": "27cf330db6b8879dd663eec9067931c14a2f1f308287f9ec634b5e104173dab4",
+    "provider.py": "46deb5876876854777c2d1c8955def205038b53bc295a875bbbbd8cdfff004c1",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
     "providers/openai.py": "cfc81048efddb3226a21f43a5bf361e8dd6d6c90b4e3596f1952264204c2a7b5",
     "providers/registry.py": "a6e0710e856de8e16f3e9b8e4b4dbe67ecbe31f91ba41e9dc5061f2887db6c39",
-    "repository.py": "0b4752781ff4554888948030da1d81578277267600c60fcb96911a512da9537e",
+    "repository.py": "dd9296b0feb6f040656994e6ac5a52eef72340146e921ec4f6989e1832ef2d3e",
     "schema.py": "5a61f985cae68ab1c874a1dfc440c0806572f72e196c4ac0e04d4f2094bb71ce",
-    "schemas.py": "8a55fbb1bac0e3569fb773553121f4adb4df7d3b47ece1164129b51807825927",
+    "schemas.py": "6d07ed8e5ce43f1c8eb5da3125c5b656b178c6b17813af4612bda6c6e0b6f357",
     "secrets.py": "7ecd41db715fba98ba035dd2e6cfe8505e1fa25e2a5fea825e7fed95e9b22fb9",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "tests/conftest.py": "5598c99d0ee9e846e2d454ca269d84c13fdfffd68f89ffe3c12a796f752d3f85",
@@ -20,5 +20,5 @@
     "tests/test_provider.py": "e86f9021d6cade52428eeb1d9db77cf930fb5db5c103f2e7e9e8c2628c8f412d",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "82f344b2a123907264927b05b861ae8918760f6a62ffbc40aa7420d6e10ea90c"
+  "manifest_hash": "70de28b7c74facf77cbf713a9e6c4dad2a72ace1e441b4df5e769dc7674f770a"
 }

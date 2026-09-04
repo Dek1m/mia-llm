@@ -22,6 +22,8 @@ DB_SCHEMA: dict[str, dict[str, Any]] = {
             "workspace_id": "UUID",
             "owner_id": "UUID",
             "is_active": "BOOLEAN DEFAULT TRUE",
+            "is_visible": "BOOLEAN NOT NULL DEFAULT TRUE",
+            "is_default": "BOOLEAN NOT NULL DEFAULT FALSE",
             "created_at": "TIMESTAMPTZ DEFAULT NOW()",
             "updated_at": "TIMESTAMPTZ DEFAULT NOW()",
         },
