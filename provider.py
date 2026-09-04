@@ -1704,6 +1704,12 @@ class LLMProvider:
         )
         started = time.monotonic()
         runs_repo = self._runs_repo(_session_user_id)
+        try:
+            from .trace_bus import clear_trace
+
+            clear_trace(session_id, client=self._trace_client())
+        except Exception:
+            pass
         run_id: str | None = None
         if runs_repo is not None:
             try:

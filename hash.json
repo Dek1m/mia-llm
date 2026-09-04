@@ -7,7 +7,7 @@
     "middleware.py": "806e7b2a05812c9eabc0d9b2bafd62d20ca8f3ea567776b9c24fffcb6b46b19e",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "201a6fb800703dd740876500bcd735b621b7258cb1f99a979034a1b731552925",
-    "provider.py": "9726c5af1bc2aace9363dd7a66c2566bb897b54d152bf7edd10f0f10ac709658",
+    "provider.py": "ffe7f5207a37f36e9d06759b47504c5eb7a18b2ce73865c0659cfcaae3bff863",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
     "providers/openai.py": "54b5898ddf9c7453a954889102cd4b94c170a03e9caebd071d865e66d32e9d16",
@@ -26,5 +26,5 @@
     "tests/test_trace_bus.py": "a950b79e89dcc9524453aba142e2adf40fcd323d674dd277b9c8a4d7f608b975",
     "trace_bus.py": "3b335c5d12a6c6335ed17d4ec295ff779cc4e1ab87a54f979255e9673b68ecb1"
   },
-  "manifest_hash": "b6eca72b3d61b407670d2676f5b8ab97df00fea0f029243df0214d5d486aaf25"
+  "manifest_hash": "73a1cf4906c7346eda67464507dec764a0332b7ab7cc2cf0c696c21b4f0679b9"
 }
