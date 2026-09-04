@@ -128,7 +128,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 32
+        assert count == 33
         assert names == {
             "chat",
             "chat_stream",
@@ -160,6 +160,7 @@ class TestApiExport:
             "list_pipelines",
             "run_usage",
             "run_pipeline",
+            "cancel_run",
             "set_agent_avatar",
             "clear_agent_avatar",
         }

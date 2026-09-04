@@ -3,9 +3,41 @@ from __future__ import annotations
 
 from typing import Any, Awaitable, Callable
 
+from prometheus_client import REGISTRY, Counter, Histogram
+
 from .middleware import TurnCtx, after_run, before_run, run_phase
 
-__all__ = ["assemble_window", "run_loop", "parse_usage"]
+__all__ = ["assemble_window", "run_loop", "parse_usage", "mark_pipeline"]
+
+
+def _counter(name: str, documentation: str, labelnames: list[str]) -> Counter:
+    existing = REGISTRY._names_to_collectors.get(name)
+    if existing is not None:
+        return existing  # type: ignore[return-value]
+    return Counter(name, documentation, labelnames)
+
+
+def _histogram(name: str, documentation: str) -> Histogram:
+    existing = REGISTRY._names_to_collectors.get(name)
+    if existing is not None:
+        return existing  # type: ignore[return-value]
+    return Histogram(name, documentation)
+
+
+llm_pipeline_total = _counter(
+    "llm_pipeline_total",
+    "LLM pipeline runs",
+    ["status"],
+)
+llm_pipeline_duration_seconds = _histogram(
+    "llm_pipeline_duration_seconds",
+    "LLM pipeline duration in seconds",
+)
+
+
+def mark_pipeline(status: str, duration_s: float) -> None:
+    llm_pipeline_total.labels(status=status).inc()
+    llm_pipeline_duration_seconds.observe(duration_s)
 
 ChatFn = Callable[..., Awaitable[dict[str, Any]]]
 

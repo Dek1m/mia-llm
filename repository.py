@@ -1072,3 +1072,45 @@ class LLMRepository:
         if row.get("id") is not None:
             row["id"] = str(row["id"])
         return row
+
+    def run_status_sync(self, run_id: str | None) -> str:
+        if not run_id or not self._psycopg_pool():
+            return ""
+        row = self._fetch_one("SELECT status FROM llm.runs WHERE id = %s", (run_id,))
+        return str(row.get("status") or "")
+
+    def finish_run_sync(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not run_id or not self._psycopg_pool():
+            return payload
+        row = self._fetch_one(
+            "UPDATE llm.runs SET status = %s, tokens_in = %s, tokens_out = %s, "
+            "cache_tokens = %s, cache_hits = %s, error = %s, updated_at = NOW() "
+            "WHERE id = %s AND status = 'running' RETURNING *",
+            (
+                payload.get("status") or "success",
+                int(payload.get("tokens_in") or 0),
+                int(payload.get("tokens_out") or 0),
+                int(payload.get("cache_tokens") or 0),
+                int(payload.get("cache_hits") or 0),
+                payload.get("error"),
+                run_id,
+            ),
+        )
+        if row.get("id") is not None:
+            row["id"] = str(row["id"])
+        return row or payload
+
+    def cancel_run_sync(self, session_id: str) -> dict[str, Any]:
+        if not session_id or not self._psycopg_pool():
+            return {}
+        row = self._fetch_one(
+            "UPDATE llm.runs SET status = 'cancelled', updated_at = NOW() "
+            "WHERE id = ("
+            "SELECT id FROM llm.runs WHERE session_id = %s AND status = 'running' "
+            "ORDER BY created_at DESC LIMIT 1"
+            ") RETURNING *",
+            (session_id,),
+        )
+        if row.get("id") is not None:
+            row["id"] = str(row["id"])
+        return row

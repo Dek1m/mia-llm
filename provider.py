@@ -1318,6 +1318,32 @@ class LLMProvider:
             return self._public_run({})
 
     @task(
+        type="database",
+        api=True,
+        permission="llm:chat",
+        name="cancel_run",
+        description="Остановить текущий loop сессии",
+        args={"session_id": "str"},
+        return_type="dict",
+    )
+    async def cancel_run(
+        self,
+        session_id: str,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None or not session_id:
+            return self._public_run({"status": "cancelled"})
+        try:
+            row = self._repo.cancel_run_sync(session_id)
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_run_cancel_failed", extra={"error": str(exc)})
+            row = {"status": "cancelled"}
+        if self._log is not None:
+            self._log.info("llm_run_cancelled", extra={"llm.session_id": session_id})
+        return self._public_run(row or {"status": "cancelled"})
+
+    @task(
         type="network",
         api=True,
         permission="llm:chat",
@@ -1378,6 +1404,33 @@ class LLMProvider:
             transcript=transcript,
             budget_chars=int(caps.get("budget_chars") or 24000),
         )
+        started = time.monotonic()
+        run_id: str | None = None
+        if self._repo is not None:
+            try:
+                started_row = self._repo.insert_run_sync(
+                    {
+                        "pipeline_id": pipe.get("id") if pipe.get("id") != pipe.get("slug") else None,
+                        "session_id": session_id,
+                        "workspace_id": workspace_id,
+                        "agent_id": agent_id,
+                        "user_id": _session_user_id,
+                        "status": "running",
+                    },
+                )
+                run_id = str(started_row.get("id") or "") or None
+            except Exception as exc:
+                if self._log is not None:
+                    self._log.warning("llm_run_insert_failed", extra={"error": str(exc)})
+        if self._log is not None:
+            self._log.info(
+                "llm_run_started",
+                extra={
+                    "llm.pipeline": pipe.get("name") or pipe.get("slug"),
+                    "llm.session_id": session_id,
+                    "llm.agent_id": agent_id,
+                },
+            )
         try:
             episode = await run_loop(
                 ctx,
@@ -1401,7 +1454,29 @@ class LLMProvider:
             }
             if self._log is not None:
                 self._log.warning("llm_run_pipeline_failed", extra={"error": error})
-        if content:
+        if run_id and self._repo is not None:
+            try:
+                if self._repo.run_status_sync(run_id) == "cancelled":
+                    status = "cancelled"
+                    content = ""
+                    error = None
+            except Exception:
+                pass
+        duration_s = time.monotonic() - started
+        from .loop import mark_pipeline
+        mark_pipeline(status, duration_s)
+        if self._log is not None:
+            self._log.info(
+                "llm_run_finished",
+                extra={
+                    "llm.status": status,
+                    "llm.duration_ms": round(duration_s * 1000, 1),
+                    "llm.tokens.input": episode.get("tokens_in"),
+                    "llm.tokens.output": episode.get("tokens_out"),
+                    "llm.cache.tokens": episode.get("cache_tokens"),
+                },
+            )
+        if content and status != "cancelled":
             self._post_assistant(
                 workspace_id,
                 session_id,
@@ -1425,7 +1500,12 @@ class LLMProvider:
         }
         if self._repo is not None:
             try:
-                run_row = self._repo.insert_run_sync(run_row)
+                if run_id:
+                    finished = self._repo.finish_run_sync(run_id, run_row)
+                    if finished.get("id"):
+                        run_row = finished
+                else:
+                    run_row = self._repo.insert_run_sync(run_row)
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning("llm_run_insert_failed", extra={"error": str(exc)})
