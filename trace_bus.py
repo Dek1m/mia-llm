@@ -5,14 +5,26 @@ import json
 import os
 from typing import Any
 
-__all__ = ["put_trace", "get_trace", "clear_trace"]
+__all__ = [
+    "put_trace",
+    "get_trace",
+    "clear_trace",
+    "add_chat_tokens",
+    "get_chat_tokens",
+]
 
 _TTL = 900
 _PREFIX = "llm:trace:"
+_CHAT_PREFIX = "llm:chat_stats:"
+_CHAT_TTL = 7 * 24 * 3600
 
 
 def _key(session_id: str) -> str:
     return f"{_PREFIX}{session_id}"
+
+
+def _chat_key(session_id: str) -> str:
+    return f"{_CHAT_PREFIX}{session_id}"
 
 
 def _connect() -> Any:
@@ -49,3 +61,24 @@ def clear_trace(session_id: str, client: Any | None = None) -> None:
         return
     bus = client or _connect()
     bus.delete(_key(session_id))
+
+
+def add_chat_tokens(session_id: str, tokens_in: int, tokens_out: int, client: Any | None = None) -> None:
+    """Копилка токенов чата: живёт неделю, переживает перезагрузку страницы."""
+    if not session_id:
+        return
+    bus = client or _connect()
+    key = _chat_key(session_id)
+    pipe = bus.pipeline()
+    pipe.hincrby(key, "in", int(tokens_in or 0))
+    pipe.hincrby(key, "out", int(tokens_out or 0))
+    pipe.expire(key, _CHAT_TTL)
+    pipe.execute()
+
+
+def get_chat_tokens(session_id: str, client: Any | None = None) -> dict[str, int]:
+    if not session_id:
+        return {"in": 0, "out": 0}
+    bus = client or _connect()
+    raw = bus.hgetall(_chat_key(session_id)) or {}
+    return {"in": int(raw.get("in") or 0), "out": int(raw.get("out") or 0)}

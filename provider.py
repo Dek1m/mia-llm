@@ -1824,6 +1824,17 @@ class LLMProvider:
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning("llm_run_insert_failed", extra={"error": str(exc)})
+        try:
+            from .trace_bus import add_chat_tokens
+
+            add_chat_tokens(
+                session_id,
+                int(episode.get("tokens_in") or 0),
+                int(episode.get("tokens_out") or 0),
+                client=self._trace_client(),
+            )
+        except Exception:
+            pass
         public = self._public_run(run_row)
         public["content"] = content or None
         return public
