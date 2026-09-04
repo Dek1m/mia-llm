@@ -142,17 +142,18 @@ class LLMProvider:
             return None
         return self._redis
 
-    def _put_live_trace(self, session_id: str, trace: dict[str, Any]) -> None:
+    def _put_live_trace(self, session_id: str, trace: dict[str, Any], user_id: str | None = None) -> None:
         try:
             from .trace_bus import put_trace
 
             put_trace(session_id, trace, client=self._trace_client())
         except Exception:
-            if self._repo is not None:
-                run = self._repo.latest_run_sync(session_id)
+            repo = self._runs_repo(user_id)
+            if repo is not None:
+                run = repo.latest_run_sync(session_id)
                 rid = str(run.get("id") or "")
                 if rid:
-                    self._repo.update_run_trace_sync(rid, trace)
+                    repo.update_run_trace_sync(rid, trace)
 
     def _get_live_trace(self, session_id: str) -> dict[str, Any] | None:
         try:
@@ -160,6 +161,17 @@ class LLMProvider:
 
             return get_trace(session_id, client=self._trace_client())
         except Exception:
+            return None
+
+    def _runs_repo(self, user_id: str | None) -> LLMRepository | None:
+        """Runs — пользовательские данные, живут в БД владельца. Без владельца не пишем."""
+        if not user_id or self._database is None or self._state is None:
+            return None
+        try:
+            return self._open_user_repo(str(user_id))
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_runs_repo_failed", extra={"error": str(exc)})
             return None
 
     def _open_user_repo(self, user_id: str) -> LLMRepository:
@@ -482,9 +494,6 @@ class LLMProvider:
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
-                )
-                db_provider.execute(
-                    "ALTER TABLE llm.runs ADD COLUMN IF NOT EXISTS trace JSONB NOT NULL DEFAULT '{}'::jsonb",
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
@@ -1583,11 +1592,12 @@ class LLMProvider:
         session_id: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None or not session_id:
+        runs_repo = self._runs_repo(_session_user_id)
+        if runs_repo is None or not session_id:
             live = self._get_live_trace(session_id or "")
             return self._public_run({"status": "running", "trace": live} if live else {})
         try:
-            row = self._repo.latest_run_sync(session_id)
+            row = runs_repo.latest_run_sync(session_id)
         except Exception:
             row = {}
         live = self._get_live_trace(session_id)
@@ -1612,10 +1622,11 @@ class LLMProvider:
         session_id: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        if self._repo is None or not session_id:
+        runs_repo = self._runs_repo(_session_user_id)
+        if runs_repo is None or not session_id:
             return self._public_run({"status": "cancelled"})
         try:
-            row = self._repo.cancel_run_sync(session_id)
+            row = runs_repo.cancel_run_sync(session_id)
         except Exception as exc:
             if self._log is not None:
                 self._log.warning("llm_run_cancel_failed", extra={"error": str(exc)})
@@ -1692,10 +1703,11 @@ class LLMProvider:
             budget_chars=int(caps.get("budget_chars") or 24000),
         )
         started = time.monotonic()
+        runs_repo = self._runs_repo(_session_user_id)
         run_id: str | None = None
-        if self._repo is not None:
+        if runs_repo is not None:
             try:
-                started_row = self._repo.insert_run_sync(
+                started_row = runs_repo.insert_run_sync(
                     {
                         "pipeline_id": pipe.get("id") if pipe.get("id") != pipe.get("slug") else None,
                         "session_id": session_id,
@@ -1723,7 +1735,7 @@ class LLMProvider:
             )
         try:
             async def on_delta(trace: dict[str, Any]) -> None:
-                self._put_live_trace(session_id, trace)
+                self._put_live_trace(session_id, trace, _session_user_id)
 
             episode = await run_loop(
                 ctx,
@@ -1748,9 +1760,9 @@ class LLMProvider:
             }
             if self._log is not None:
                 self._log.warning("llm_run_pipeline_failed", extra={"error": error})
-        if run_id and self._repo is not None:
+        if run_id and runs_repo is not None:
             try:
-                if self._repo.run_status_sync(run_id) == "cancelled":
+                if runs_repo.run_status_sync(run_id) == "cancelled":
                     status = "cancelled"
                     content = ""
                     error = None
@@ -1795,14 +1807,14 @@ class LLMProvider:
             "cache_hits": int(episode.get("cache_hits") or 0),
             "error": error,
         }
-        if self._repo is not None:
+        if runs_repo is not None:
             try:
                 if run_id:
-                    finished = self._repo.finish_run_sync(run_id, run_row)
+                    finished = runs_repo.finish_run_sync(run_id, run_row)
                     if finished.get("id"):
                         run_row = finished
                 else:
-                    run_row = self._repo.insert_run_sync(run_row)
+                    run_row = runs_repo.insert_run_sync(run_row)
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning("llm_run_insert_failed", extra={"error": str(exc)})

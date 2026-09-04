@@ -22,22 +22,5 @@ CREATE TABLE IF NOT EXISTS llm.pipeline_steps (
 CREATE UNIQUE INDEX IF NOT EXISTS pipeline_steps_ord
     ON llm.pipeline_steps (pipeline_id, ord);
 
-CREATE TABLE IF NOT EXISTS llm.runs (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    pipeline_id UUID REFERENCES llm.pipelines(id) ON DELETE SET NULL,
-    session_id UUID,
-    workspace_id UUID,
-    agent_id UUID,
-    user_id UUID,
-    status TEXT NOT NULL,
-    tokens_in INTEGER NOT NULL DEFAULT 0,
-    tokens_out INTEGER NOT NULL DEFAULT 0,
-    cache_tokens INTEGER NOT NULL DEFAULT 0,
-    cache_hits INTEGER NOT NULL DEFAULT 0,
-    error TEXT,
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-    updated_at TIMESTAMPTZ DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS llm_runs_session_created
-    ON llm.runs (session_id, created_at DESC);
+-- Пайплайны — общесистемный справочник (belle).
+-- Runs — пользовательские данные (belle_workspace_*), создаются в _open_user_repo.
