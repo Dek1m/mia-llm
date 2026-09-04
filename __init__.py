@@ -29,7 +29,7 @@ __all__ = [
     "StreamChunk",
 ]
 
-MODULE_VERSION = "1.0.0"
+MODULE_VERSION = "1.1.0"
 
 
 class LLMModule(ModuleBase):

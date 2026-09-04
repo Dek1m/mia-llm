@@ -942,3 +942,133 @@ class LLMRepository:
             group_ids,
         )
         return [dict(row) for row in rows]
+
+    def seed_pipelines_sync(self) -> None:
+        import json
+
+        from .middleware import DEFAULT_PIPELINE
+
+        if not hasattr(self._pool, "connection"):
+            return
+        spec = DEFAULT_PIPELINE
+        with self._pool.connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO llm.pipelines (name, slug, purpose, caps) "
+                    "VALUES (%s, %s, %s, %s::jsonb) "
+                    "ON CONFLICT (slug) DO UPDATE SET "
+                    "name = EXCLUDED.name, purpose = EXCLUDED.purpose, "
+                    "caps = EXCLUDED.caps, updated_at = NOW() "
+                    "RETURNING id",
+                    (
+                        spec["name"],
+                        spec["slug"],
+                        spec["purpose"],
+                        json.dumps(spec["caps"]),
+                    ),
+                )
+                raw = cur.fetchone()
+                pipeline_id = raw[0] if raw else None
+                if pipeline_id is None:
+                    return
+                cur.execute("DELETE FROM llm.pipeline_steps WHERE pipeline_id = %s", (pipeline_id,))
+                for step in spec["steps"]:
+                    cur.execute(
+                        "INSERT INTO llm.pipeline_steps "
+                        "(pipeline_id, ord, middleware_id, phase, enabled, config) "
+                        "VALUES (%s, %s, %s, %s, %s, %s::jsonb)",
+                        (
+                            pipeline_id,
+                            step["ord"],
+                            step["middleware_id"],
+                            step["phase"],
+                            step["enabled"],
+                            json.dumps(step.get("config") or {}),
+                        ),
+                    )
+
+    def list_pipelines_sync(self) -> list[dict[str, Any]]:
+        if not self._psycopg_pool():
+            return []
+        rows = self._fetch_all(
+            "SELECT id, name, slug, purpose, caps, rev FROM llm.pipelines ORDER BY name",
+        )
+        steps = self._fetch_all(
+            "SELECT pipeline_id, ord, middleware_id, phase, enabled, config "
+            "FROM llm.pipeline_steps ORDER BY ord",
+        )
+        grouped: dict[str, list[dict[str, Any]]] = {}
+        for step in steps:
+            key = str(step.get("pipeline_id"))
+            grouped.setdefault(key, []).append(
+                {
+                    "ord": step.get("ord"),
+                    "middleware_id": step.get("middleware_id"),
+                    "phase": step.get("phase"),
+                    "enabled": step.get("enabled"),
+                    "config": step.get("config") or {},
+                },
+            )
+        items = []
+        for row in rows:
+            pid = str(row.get("id"))
+            items.append(
+                {
+                    "id": pid,
+                    "name": row.get("name"),
+                    "slug": row.get("slug"),
+                    "purpose": row.get("purpose"),
+                    "caps": row.get("caps") or {},
+                    "rev": row.get("rev") or 1,
+                    "steps": grouped.get(pid, []),
+                },
+            )
+        return items
+
+    def get_pipeline_sync(self, pipeline_id: str | None) -> dict[str, Any]:
+        items = self.list_pipelines_sync()
+        if pipeline_id:
+            for item in items:
+                if item["id"] == pipeline_id or item.get("slug") == pipeline_id:
+                    return item
+        for item in items:
+            if item.get("slug") == "main-algorithm":
+                return item
+        return items[0] if items else {}
+
+    def insert_run_sync(self, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self._psycopg_pool():
+            return payload
+        row = self._fetch_one(
+            "INSERT INTO llm.runs "
+            "(pipeline_id, session_id, workspace_id, agent_id, user_id, status, "
+            "tokens_in, tokens_out, cache_tokens, cache_hits, error) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+            (
+                payload.get("pipeline_id"),
+                payload.get("session_id"),
+                payload.get("workspace_id"),
+                payload.get("agent_id"),
+                payload.get("user_id"),
+                payload.get("status") or "idle",
+                int(payload.get("tokens_in") or 0),
+                int(payload.get("tokens_out") or 0),
+                int(payload.get("cache_tokens") or 0),
+                int(payload.get("cache_hits") or 0),
+                payload.get("error"),
+            ),
+        )
+        if row.get("id") is not None:
+            row["id"] = str(row["id"])
+        return row or payload
+
+    def latest_run_sync(self, session_id: str | None) -> dict[str, Any]:
+        if not session_id or not self._psycopg_pool():
+            return {}
+        row = self._fetch_one(
+            "SELECT * FROM llm.runs WHERE session_id = %s ORDER BY created_at DESC LIMIT 1",
+            (session_id,),
+        )
+        if row.get("id") is not None:
+            row["id"] = str(row["id"])
+        return row

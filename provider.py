@@ -259,6 +259,11 @@ class LLMProvider:
                 if self._log is not None:
                     self._log.warning("llm_agent_flags_alter_failed", extra={"error": str(exc)})
         self._repo.seed_system_agents_sync()
+        try:
+            self._repo.seed_pipelines_sync()
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_pipelines_seed_failed", extra={"error": str(exc)})
         if self._log is not None:
             self._log.info("LLM schema registered, system agents seeded")
 
@@ -1170,6 +1175,264 @@ class LLMProvider:
         except Exception as exc:
             raise LLMError("Wrong URL", "WRONG_URL") from exc
         return _parse_models(payload)
+
+    def _pipeline_items(self) -> list[dict[str, Any]]:
+        from .middleware import DEFAULT_PIPELINE
+
+        fallback = {
+            "id": DEFAULT_PIPELINE["slug"],
+            "name": DEFAULT_PIPELINE["name"],
+            "slug": DEFAULT_PIPELINE["slug"],
+            "purpose": DEFAULT_PIPELINE["purpose"],
+            "caps": DEFAULT_PIPELINE["caps"],
+            "rev": 1,
+            "steps": DEFAULT_PIPELINE["steps"],
+        }
+        if self._repo is None:
+            return [fallback]
+        try:
+            items = self._repo.list_pipelines_sync()
+        except Exception:
+            return [fallback]
+        return items or [fallback]
+
+    def _load_transcript(
+        self,
+        workspace_id: str,
+        session_id: str,
+        user_id: str | None,
+    ) -> list[dict[str, Any]]:
+        accessor = getattr(self._state, "workspace", None) if self._state is not None else None
+        if accessor is None or not user_id:
+            return []
+        try:
+            ws = accessor(user=user_id, ws=workspace_id)
+            data = ws.sessions(session_id)
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_transcript_failed", extra={"error": str(exc)})
+            return []
+        events = data.get("items") or data.get("events") or []
+        out: list[dict[str, Any]] = []
+        for item in events:
+            if not isinstance(item, dict):
+                continue
+            if item.get("kind") not in (None, "message"):
+                if item.get("role") not in {"user", "assistant", "system"}:
+                    continue
+            role = str(item.get("role") or "")
+            content = str(item.get("content") or "")
+            if role in {"user", "assistant", "system"} and content:
+                out.append({"id": str(item.get("id") or ""), "role": role, "content": content})
+        return out
+
+    def _post_assistant(
+        self,
+        workspace_id: str,
+        session_id: str,
+        user_id: str | None,
+        content: str,
+        agent_name: str | None,
+        model_name: str | None,
+    ) -> None:
+        accessor = getattr(self._state, "workspace", None) if self._state is not None else None
+        if accessor is None or not user_id or not content:
+            return
+        try:
+            ws = accessor(user=user_id, ws=workspace_id)
+            payload: dict[str, Any] = {}
+            if agent_name:
+                payload["agent_name"] = agent_name
+            if model_name:
+                payload["model_name"] = model_name
+            ws.insert_event(session_id, "message", role="assistant", content=content, payload=payload or None)
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_post_assistant_failed", extra={"error": str(exc)})
+
+    def _public_run(self, row: dict[str, Any]) -> dict[str, Any]:
+        if not row:
+            return {
+                "id": None,
+                "status": "idle",
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cache_tokens": 0,
+                "cache_hits": 0,
+            }
+        return {
+            "id": str(row.get("id") or "") or None,
+            "status": row.get("status") or "idle",
+            "tokens_in": int(row.get("tokens_in") or 0),
+            "tokens_out": int(row.get("tokens_out") or 0),
+            "cache_tokens": int(row.get("cache_tokens") or 0),
+            "cache_hits": int(row.get("cache_hits") or 0),
+            "error": row.get("error"),
+        }
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_list",
+        name="list_middleware",
+        description="Каталог middleware сборки контекста",
+        args={},
+        return_type="dict",
+    )
+    async def list_middleware(self, _session_user_id: str | None = None) -> dict[str, Any]:
+        from .middleware import list_catalog
+
+        return {"items": list_catalog()}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:agent_list",
+        name="list_pipelines",
+        description="Список пайплайнов сборки контекста",
+        args={},
+        return_type="dict",
+    )
+    async def list_pipelines(self, _session_user_id: str | None = None) -> dict[str, Any]:
+        return {"items": self._pipeline_items()}
+
+    @task(
+        type="database",
+        api=True,
+        permission="llm:chat",
+        name="run_usage",
+        description="Usage последнего run сессии",
+        args={"session_id": "str"},
+        return_type="dict",
+    )
+    async def run_usage(
+        self,
+        session_id: str | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        if self._repo is None or not session_id:
+            return self._public_run({})
+        try:
+            return self._public_run(self._repo.latest_run_sync(session_id))
+        except Exception:
+            return self._public_run({})
+
+    @task(
+        type="network",
+        api=True,
+        permission="llm:chat",
+        name="run_pipeline",
+        description="Собрать контекст пайплайном и вызвать LLM-loop",
+        args={
+            "workspace_id": "str",
+            "session_id": "str",
+            "pipeline_id": "str",
+            "agent_id": "str",
+        },
+        return_type="dict",
+    )
+    async def run_pipeline(
+        self,
+        workspace_id: str,
+        session_id: str,
+        pipeline_id: str | None = None,
+        agent_id: str | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        _session_user_id: str | None = None,
+    ) -> dict[str, Any]:
+        from .loop import run_loop
+        from .middleware import DEFAULT_PIPELINE, TurnCtx
+
+        pipe = {}
+        if self._repo is not None:
+            try:
+                pipe = self._repo.get_pipeline_sync(pipeline_id)
+            except Exception:
+                pipe = {}
+        if not pipe:
+            pipe = {
+                "id": DEFAULT_PIPELINE["slug"],
+                "slug": DEFAULT_PIPELINE["slug"],
+                "steps": DEFAULT_PIPELINE["steps"],
+                "caps": DEFAULT_PIPELINE["caps"],
+            }
+        agent_row: dict[str, Any] = {}
+        if agent_id and self._repo is not None:
+            try:
+                agent_row = await self._repo.get_agent(agent_id) or {}
+            except Exception:
+                agent_row = {}
+        transcript = messages or self._load_transcript(workspace_id, session_id, _session_user_id)
+        query = ""
+        for item in reversed(transcript):
+            if item.get("role") == "user":
+                query = str(item.get("content") or "")
+                break
+        caps = pipe.get("caps") or {}
+        ctx = TurnCtx(
+            query=query,
+            workspace_id=workspace_id,
+            session_id=session_id,
+            agent_id=agent_id,
+            user_id=_session_user_id,
+            transcript=transcript,
+            budget_chars=int(caps.get("budget_chars") or 24000),
+        )
+        try:
+            episode = await run_loop(
+                ctx,
+                pipe.get("steps") or DEFAULT_PIPELINE["steps"],
+                system_prompt=agent_row.get("system_prompt"),
+                chat=self._chat,
+                model=agent_row.get("model"),
+            )
+            status = "success"
+            error = None
+            content = str(episode.get("content") or "")
+        except Exception as exc:
+            status = "error"
+            error = str(exc)
+            content = ""
+            episode = {
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "cache_tokens": 0,
+                "cache_hits": 0,
+            }
+            if self._log is not None:
+                self._log.warning("llm_run_pipeline_failed", extra={"error": error})
+        if content:
+            self._post_assistant(
+                workspace_id,
+                session_id,
+                _session_user_id,
+                content,
+                agent_row.get("name"),
+                episode.get("model") if isinstance(episode, dict) else None,
+            )
+        run_row = {
+            "pipeline_id": pipe.get("id") if pipe.get("id") != pipe.get("slug") else None,
+            "session_id": session_id,
+            "workspace_id": workspace_id,
+            "agent_id": agent_id,
+            "user_id": _session_user_id,
+            "status": status,
+            "tokens_in": int(episode.get("tokens_in") or 0),
+            "tokens_out": int(episode.get("tokens_out") or 0),
+            "cache_tokens": int(episode.get("cache_tokens") or 0),
+            "cache_hits": int(episode.get("cache_hits") or 0),
+            "error": error,
+        }
+        if self._repo is not None:
+            try:
+                run_row = self._repo.insert_run_sync(run_row)
+            except Exception as exc:
+                if self._log is not None:
+                    self._log.warning("llm_run_insert_failed", extra={"error": str(exc)})
+        public = self._public_run(run_row)
+        public["content"] = content or None
+        return public
+
 
 
 def _cipher_key(api_key: str | None) -> str | None:

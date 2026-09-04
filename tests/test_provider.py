@@ -54,6 +54,18 @@ class TestChat:
         )
         assert "content" in result
 
+    async def test_run_pipeline_with_messages(self, provider: LLMProvider):
+        fake = FakeLLMProvider(name="openai")
+        provider._provider_registry.register("openai", fake)
+        provider._provider_registry.set_default("openai")
+        result = await provider.run_pipeline(
+            workspace_id="w",
+            session_id="s",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+        assert result["status"] == "success"
+        assert result["content"]
+
 
 @pytest.mark.asyncio
 class TestProviders:
@@ -78,9 +90,9 @@ class TestSchemaRegistration:
         # Проверяем что AUTH_SCHEMA валиден
         from modules.llm.schema import LLM_SCHEMA
         assert "permissions" in LLM_SCHEMA
-        assert len(LLM_SCHEMA["permissions"]) == 5
+        assert len(LLM_SCHEMA["permissions"]) == 7
         assert "roles" in LLM_SCHEMA
-        assert len(LLM_SCHEMA["roles"]) == 2
+        assert len(LLM_SCHEMA["roles"]) == 3
 
     def test_schema_permissions_namespace(self):
         """Все permissions начинаются с 'llm:'."""
@@ -100,6 +112,8 @@ class TestSchemaRegistration:
         assert "llm_agents" in DB_SCHEMA
         assert "llm_providers" in DB_SCHEMA
         assert "llm_models" in DB_SCHEMA
+        assert "pipelines" in DB_SCHEMA
+        assert "runs" in DB_SCHEMA
         assert "description" in DB_SCHEMA["llm_providers"]["columns"]
 
 
@@ -114,7 +128,7 @@ class TestApiExport:
         reg = MethodRegistry()
         count = reg.collect_from_module(provider, "llm")
         names = {m.name for m in reg.list_methods("llm")}
-        assert count == 26
+        assert count == 32
         assert names == {
             "chat",
             "chat_stream",
@@ -142,6 +156,12 @@ class TestApiExport:
             "share_provider",
             "unshare_provider",
             "list_provider_shares",
+            "list_middleware",
+            "list_pipelines",
+            "run_usage",
+            "run_pipeline",
+            "set_agent_avatar",
+            "clear_agent_avatar",
         }
 
     def test_initialize_has_no_api_meta(self) -> None:
