@@ -132,6 +132,68 @@ class TestOpenAIProvider:
         with pytest.raises(httpx.HTTPStatusError):
             await provider.chat(messages=[{"role": "user", "content": "1"}])
 
+    @pytest.mark.asyncio
+    async def test_stream_no_double_context_entry(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Регресс: у httpx.Response нет __aenter__ — двойной вход падал TypeError."""
+
+        class _StreamResp:
+            status_code = 200
+            headers: dict[str, str] = {}
+
+            def __init__(self) -> None:
+                self.aenter_calls = 0
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def __enter__(self):  # намеренно: только sync-CM, как у httpx.Response
+                raise AssertionError("sync entry must not be used")
+
+            async def aiter_lines(self):
+                import json
+
+                yield 'data: {"choices":[{"delta":{"content":"he"}}]}'
+                yield 'data: {"choices":[{"delta":{"content":"y"}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}'
+                yield "data: [DONE]"
+
+        class _StreamCtx:
+            def __init__(self, resp: _StreamResp) -> None:
+                self.resp = resp
+
+            async def __aenter__(self):
+                self.resp.aenter_calls += 1
+                return self.resp
+
+            async def __aexit__(self, *args: Any):
+                return None
+
+        class _StreamClient:
+            def __init__(self, **kwargs: Any) -> None:
+                self.resp = _StreamResp()
+                self.closed = False
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+            def stream(self, *args: Any, **kwargs: Any) -> _StreamCtx:
+                return _StreamCtx(self.resp)
+
+        client = _StreamClient()
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        provider = OpenAIProvider(name="t", base_url="https://vendor.test/v1", api_key="k")
+        seen: list[dict[str, Any]] = []
+
+        async def on_delta(trace: dict[str, Any]) -> None:
+            seen.append(trace)
+
+        result = await provider.chat(messages=[{"role": "user", "content": "1"}], on_delta=on_delta)
+        assert result["content"] == "hey"
+        assert result["usage"]["completion_tokens"] == 2
+        assert client.resp.aenter_calls == 1
+        assert client.closed is True
+        # Эмиты троттлятся (0.12с) — второй чанк может слиться с финалом.
+        assert seen and seen[-1]["content"] in ("he", "hey")
+
 
 class TestProviderRegistry:
     def test_register_and_get(self):

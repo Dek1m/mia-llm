@@ -210,9 +210,12 @@ class OpenAIProvider(BaseProvider):
         model = str(payload.get("model") or "")
         finish = None
         last_emit = 0.0
-        resp = None
-        # один вежливый повтор на 429 — как в нестримовом пути
-        async with httpx.AsyncClient(timeout=self._timeout) as client:
+        client = httpx.AsyncClient(timeout=self._timeout)
+        resp_ctx: Any = None
+        try:
+            # один вежливый повтор на 429 — как в нестримовом пути.
+            # ВАЖНО: контекст стрима входим ровно один раз; у httpx.Response
+            # нет повторного async-входа.
             for attempt in (0, 1):
                 resp_ctx = client.stream("POST", url, json=body, headers=headers)
                 resp = await resp_ctx.__aenter__()
@@ -220,11 +223,10 @@ class OpenAIProvider(BaseProvider):
                     import asyncio
 
                     await resp_ctx.__aexit__(None, None, None)
+                    resp_ctx = None
                     await asyncio.sleep(_retry_after(resp))
                     continue
                 break
-        assert resp is not None
-        async with resp:
             resp.raise_for_status()
             async for raw in resp.aiter_lines():
                 line = raw.strip()
@@ -279,6 +281,13 @@ class OpenAIProvider(BaseProvider):
                     emitted = on_delta(trace)
                     if hasattr(emitted, "__await__"):
                         await emitted
+        finally:
+            if resp_ctx is not None:
+                try:
+                    await resp_ctx.__aexit__(None, None, None)
+                except Exception:
+                    pass
+            await client.aclose()
         content = "".join(content_parts)
         reasoning = "".join(reasoning_parts)
         for item in tools:

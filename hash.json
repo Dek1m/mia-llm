@@ -10,7 +10,7 @@
     "provider.py": "9726c5af1bc2aace9363dd7a66c2566bb897b54d152bf7edd10f0f10ac709658",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
-    "providers/openai.py": "cd75814fbf21ca87e93f1320daf4f7a82d2f4baaee9ef772de0266bc4bf5dd3b",
+    "providers/openai.py": "54b5898ddf9c7453a954889102cd4b94c170a03e9caebd071d865e66d32e9d16",
     "providers/registry.py": "d29660b2fe2c1f23d44b690609a3dcb8e74544bb768a07478618b395010ca3a8",
     "repository.py": "cb6799ce8d86a6c20a5f1db51c1fd7949303b7d4c3add5a76974abac4d2c0e93",
     "schema.py": "5a61f985cae68ab1c874a1dfc440c0806572f72e196c4ac0e04d4f2094bb71ce",
@@ -22,9 +22,9 @@
     "tests/test_loop.py": "67f4d088db09ad49e6c5554dccfd53e462c18f089b994c78ac77fb22e24aff0c",
     "tests/test_oauth.py": "481114f07c17fbcbc99b74762856f4d684425cb09fe94b5503db52e8e5b8b644",
     "tests/test_provider.py": "0c8d0ecd5a4d3e5f6ff7ee45bc5c7ac804303901d764522be2d08217a62ee451",
-    "tests/test_providers.py": "879a5436a4301e5ce724bab37a1a1a87d9623edf607db82d483c8aaadd36fc45",
+    "tests/test_providers.py": "25a9683f180085fb3e33b7a1f42a2e0e0f19db3d424363f78af31851e19ec1d1",
     "tests/test_trace_bus.py": "a950b79e89dcc9524453aba142e2adf40fcd323d674dd277b9c8a4d7f608b975",
     "trace_bus.py": "3b335c5d12a6c6335ed17d4ec295ff779cc4e1ab87a54f979255e9673b68ecb1"
   },
-  "manifest_hash": "98173f3a72bfda73421b217b604866dbb7281955d87bb99d17e63798d4896bba"
+  "manifest_hash": "b6eca72b3d61b407670d2676f5b8ab97df00fea0f029243df0214d5d486aaf25"
 }
