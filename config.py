@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from typing import ClassVar
+
+from modules_system.pref_spec import PrefField
 
 __all__ = ["LLMConfig"]
 
@@ -32,6 +35,37 @@ class LLMConfig:
     default_temperature: float = 0.7
     default_max_tokens: int = 4096
     default_top_p: float = 1.0
+
+    SETTINGS: ClassVar[tuple[PrefField, ...]] = (
+        PrefField(
+            "default_provider", "Default provider",
+            "Имя провайдера по умолчанию, если агент не задал.",
+            "string", "openai", "Routing", env="MIA_LLM_DEFAULT_PROVIDER",
+        ),
+        PrefField(
+            "fallback_provider", "Fallback provider",
+            "Резервный провайдер при ошибке основного. Пусто — без fallback.",
+            "string", "", "Routing", env="MIA_LLM_FALLBACK_PROVIDER",
+        ),
+        PrefField(
+            "default_temperature", "Temperature",
+            "Температура сэмплинга по умолчанию.",
+            "float", 0.7, "Generation", env="LLM_DEFAULT_TEMPERATURE",
+            minimum=0, maximum=2,
+        ),
+        PrefField(
+            "default_max_tokens", "Max tokens",
+            "Потолок токенов ответа по умолчанию.",
+            "int", 4096, "Generation", env="LLM_DEFAULT_MAX_TOKENS",
+            minimum=1, maximum=128_000,
+        ),
+        PrefField(
+            "default_top_p", "Top P",
+            "nucleus sampling по умолчанию.",
+            "float", 1.0, "Generation", env="LLM_DEFAULT_TOP_P",
+            minimum=0, maximum=1,
+        ),
+    )
 
     @classmethod
     def from_env(cls) -> LLMConfig:

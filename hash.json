@@ -2,7 +2,7 @@
   "version": "1.0.0",
   "files": {
     "__init__.py": "ff77d9afc89e24b67310066f9ad0565a5853a02aeb6b640ff29539406146f406",
-    "config.py": "1d26709c8f7b683116a8c5dc756387ccdd337ec38838e6e153bad26215f2c64d",
+    "config.py": "97ab817a1f95428ffdb3e18168b42f89367aa1a5ae380392d251e05beaaf5368",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "87c0fcb4938bb11d4d74314fb741713c16f256af72c68c611e8341eee75666de",
     "provider.py": "27cf330db6b8879dd663eec9067931c14a2f1f308287f9ec634b5e104173dab4",
@@ -20,5 +20,5 @@
     "tests/test_provider.py": "e86f9021d6cade52428eeb1d9db77cf930fb5db5c103f2e7e9e8c2628c8f412d",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "73528d6075800ec4d63436a6c1b1816b1a2c475f7bd994822e957ba666a054a2"
+  "manifest_hash": "82f344b2a123907264927b05b861ae8918760f6a62ffbc40aa7420d6e10ea90c"
 }
