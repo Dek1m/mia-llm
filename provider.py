@@ -244,16 +244,20 @@ class LLMProvider:
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
                 )
+                self._repo.reencrypt_api_keys_sync()
+            except Exception as exc:
+                if self._log is not None:
+                    self._log.warning("llm_providers_alter_failed", extra={"error": str(exc)})
+            try:
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_visible BOOLEAN NOT NULL DEFAULT TRUE",
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_default BOOLEAN NOT NULL DEFAULT FALSE",
                 )
-                self._repo.reencrypt_api_keys_sync()
             except Exception as exc:
                 if self._log is not None:
-                    self._log.warning("llm_providers_alter_failed", extra={"error": str(exc)})
+                    self._log.warning("llm_agent_flags_alter_failed", extra={"error": str(exc)})
         self._repo.seed_system_agents_sync()
         if self._log is not None:
             self._log.info("LLM schema registered, system agents seeded")

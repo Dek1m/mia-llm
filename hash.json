@@ -3,9 +3,17 @@
   "files": {
     "__init__.py": "ff77d9afc89e24b67310066f9ad0565a5853a02aeb6b640ff29539406146f406",
     "config.py": "97ab817a1f95428ffdb3e18168b42f89367aa1a5ae380392d251e05beaaf5368",
+    "ddl/001_indexes.sql": "58b63555d473219944accb42c340cada03bfd89cc8a8ae28d046cf78406e7170",
+    "ddl/002_provider_models.sql": "9d196532f16edc3cad3b5c9eb21c4f7d311deb8681b879f94311ab2738ceb5d3",
+    "ddl/003_model_reasoning.sql": "5c8236ae014e18e52a117d300f6dbb086f888332c828a77bf9fafb3a65f01f79",
+    "ddl/004_drop_unselected_models.sql": "7ea3d042945c8bed8d93ff2a64b2b5e595c2dc5f11ec782c0a86f75c32035720",
+    "ddl/005_provider_shares.sql": "e1475c4802e105c19663063b2be417fd8d881cc3d816386313f31b238aa7a4a9",
+    "ddl/006_share_system_fk.sql": "a764a4462c435ca30f2272cb48dbe990c2b371408fb24d336473600d304071df",
+    "ddl/007_agent_is_active.sql": "b2f3a3781a77b59506da483e540b10b3e64af40912fbe43f7245a8912ed83f3d",
+    "ddl/008_agent_flags.sql": "0283da993f5ace5f9cbcb2f981f8bdb8e5b2f70265a70e71bfc17be9b4cb484d",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "87c0fcb4938bb11d4d74314fb741713c16f256af72c68c611e8341eee75666de",
-    "provider.py": "46deb5876876854777c2d1c8955def205038b53bc295a875bbbbd8cdfff004c1",
+    "provider.py": "c55b33784ae0f5fc21e60b10825a8054021b40ce92e6e582c25cddb0404918cd",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
     "providers/openai.py": "cfc81048efddb3226a21f43a5bf361e8dd6d6c90b4e3596f1952264204c2a7b5",
@@ -20,5 +28,5 @@
     "tests/test_provider.py": "e86f9021d6cade52428eeb1d9db77cf930fb5db5c103f2e7e9e8c2628c8f412d",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "70de28b7c74facf77cbf713a9e6c4dad2a72ace1e441b4df5e769dc7674f770a"
+  "manifest_hash": "452b5e3716a262134e9e2aa196145df713662c2bcf8754536e29932712d415f4"
 }
