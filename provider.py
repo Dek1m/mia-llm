@@ -171,12 +171,13 @@ class LLMProvider:
             self._state.workspace(user=user_id)
         dbname = user_dbname(user_id)
         pool = self._database.get_pool(dbname)
+        # ddl_dir сюда нельзя: ddl-файлы ссылаются на auth/system, которых в user-БД нет,
+        # а 004 — DELETE. Нужное создаём идемпотентно ниже.
         self._database.register_schema(
             "llm",
             deepcopy(DB_SCHEMA),
             schema_name="llm",
             pool=pool,
-            ddl_dir=str(__import__("pathlib").Path(__file__).resolve().parent / "ddl"),
         )
         with pool.connection() as conn:
             with conn.cursor() as cur:
@@ -189,6 +190,31 @@ class LLMProvider:
                 )
                 cur.execute(
                     "CREATE INDEX IF NOT EXISTS idx_llm_providers_kind ON llm.llm_providers (kind)"
+                )
+                cur.execute(
+                    """
+                    CREATE TABLE IF NOT EXISTS llm.runs (
+                        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                        pipeline_id UUID,
+                        session_id UUID,
+                        workspace_id UUID,
+                        agent_id UUID,
+                        user_id UUID,
+                        status TEXT NOT NULL,
+                        tokens_in INTEGER NOT NULL DEFAULT 0,
+                        tokens_out INTEGER NOT NULL DEFAULT 0,
+                        cache_tokens INTEGER NOT NULL DEFAULT 0,
+                        cache_hits INTEGER NOT NULL DEFAULT 0,
+                        trace JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        error TEXT,
+                        created_at TIMESTAMPTZ DEFAULT NOW(),
+                        updated_at TIMESTAMPTZ DEFAULT NOW()
+                    )
+                    """
+                )
+                cur.execute(
+                    "CREATE INDEX IF NOT EXISTS llm_runs_session_created "
+                    "ON llm.runs (session_id, created_at DESC)"
                 )
         return LLMRepository(pool, log=self._log)
 
