@@ -210,62 +210,75 @@ class OpenAIProvider(BaseProvider):
         model = str(payload.get("model") or "")
         finish = None
         last_emit = 0.0
+        resp = None
+        # один вежливый повтор на 429 — как в нестримовом пути
         async with httpx.AsyncClient(timeout=self._timeout) as client:
-            async with client.stream("POST", url, json=body, headers=headers) as resp:
-                resp.raise_for_status()
-                async for raw in resp.aiter_lines():
-                    line = raw.strip()
-                    if not line or line.startswith(":"):
-                        continue
-                    if line.startswith("data:"):
-                        line = line[5:].strip()
-                    if line == "[DONE]":
-                        break
-                    try:
-                        chunk = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if not isinstance(chunk, dict):
-                        continue
-                    if chunk.get("usage"):
-                        usage = chunk["usage"]
-                    if chunk.get("model"):
-                        model = str(chunk["model"])
-                    choice = (chunk.get("choices") or [{}])[0]
-                    finish = choice.get("finish_reason") or finish
-                    delta = choice.get("delta") or choice.get("message") or {}
-                    piece = delta.get("content")
-                    if piece:
-                        content_parts.append(str(piece))
-                    think = (
-                        delta.get("reasoning_content")
-                        or delta.get("reasoning")
-                        or ""
-                    )
-                    if isinstance(delta.get("thinking"), str):
-                        think = think or delta.get("thinking")
-                    if think:
-                        reasoning_parts.append(str(think))
-                    for item in delta.get("tool_calls") or []:
-                        fn = item.get("function") or {}
-                        tools.append({
-                            "name": fn.get("name") or item.get("name") or "tool",
-                            "args": fn.get("arguments") or "",
-                            "status": "running",
-                        })
-                    now = time.monotonic()
-                    if now - last_emit >= 0.12:
-                        last_emit = now
-                        content = "".join(content_parts)
-                        reasoning = "".join(reasoning_parts)
-                        trace = {
-                            "content": content,
-                            "reasoning": reasoning,
-                            "stages": stages_from_output(reasoning, content, tools),
-                        }
-                        emitted = on_delta(trace)
-                        if hasattr(emitted, "__await__"):
-                            await emitted
+            for attempt in (0, 1):
+                resp_ctx = client.stream("POST", url, json=body, headers=headers)
+                resp = await resp_ctx.__aenter__()
+                if resp.status_code == 429 and attempt == 0:
+                    import asyncio
+
+                    await resp_ctx.__aexit__(None, None, None)
+                    await asyncio.sleep(_retry_after(resp))
+                    continue
+                break
+        assert resp is not None
+        async with resp:
+            resp.raise_for_status()
+            async for raw in resp.aiter_lines():
+                line = raw.strip()
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data:"):
+                    line = line[5:].strip()
+                if line == "[DONE]":
+                    break
+                try:
+                    chunk = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(chunk, dict):
+                    continue
+                if chunk.get("usage"):
+                    usage = chunk["usage"]
+                if chunk.get("model"):
+                    model = str(chunk["model"])
+                choice = (chunk.get("choices") or [{}])[0]
+                finish = choice.get("finish_reason") or finish
+                delta = choice.get("delta") or choice.get("message") or {}
+                piece = delta.get("content")
+                if piece:
+                    content_parts.append(str(piece))
+                think = (
+                    delta.get("reasoning_content")
+                    or delta.get("reasoning")
+                    or ""
+                )
+                if isinstance(delta.get("thinking"), str):
+                    think = think or delta.get("thinking")
+                if think:
+                    reasoning_parts.append(str(think))
+                for item in delta.get("tool_calls") or []:
+                    fn = item.get("function") or {}
+                    tools.append({
+                        "name": fn.get("name") or item.get("name") or "tool",
+                        "args": fn.get("arguments") or "",
+                        "status": "running",
+                    })
+                now = time.monotonic()
+                if now - last_emit >= 0.12:
+                    last_emit = now
+                    content = "".join(content_parts)
+                    reasoning = "".join(reasoning_parts)
+                    trace = {
+                        "content": content,
+                        "reasoning": reasoning,
+                        "stages": stages_from_output(reasoning, content, tools),
+                    }
+                    emitted = on_delta(trace)
+                    if hasattr(emitted, "__await__"):
+                        await emitted
         content = "".join(content_parts)
         reasoning = "".join(reasoning_parts)
         for item in tools:

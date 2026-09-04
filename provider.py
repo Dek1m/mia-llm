@@ -176,6 +176,7 @@ class LLMProvider:
             deepcopy(DB_SCHEMA),
             schema_name="llm",
             pool=pool,
+            ddl_dir=str(__import__("pathlib").Path(__file__).resolve().parent / "ddl"),
         )
         with pool.connection() as conn:
             with conn.cursor() as cur:
