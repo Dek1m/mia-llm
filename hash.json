@@ -3,26 +3,26 @@
   "files": {
     "__init__.py": "82c3e89c00623aaca2067de1ce6fdf2c45b7c62320f097de21b00bfdeabd2049",
     "config.py": "97ab817a1f95428ffdb3e18168b42f89367aa1a5ae380392d251e05beaaf5368",
-    "loop.py": "567d5316bf64c788c0aec933bf3577f98f54db24953e655f0bcb4a950ae8a172",
+    "loop.py": "7934c6f768770e5d0b57ac720a5dfe1fc671d4ed2f7fd4ec3a003c451b5d6308",
     "middleware.py": "806e7b2a05812c9eabc0d9b2bafd62d20ca8f3ea567776b9c24fffcb6b46b19e",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "201a6fb800703dd740876500bcd735b621b7258cb1f99a979034a1b731552925",
-    "provider.py": "dc6a75e4998c3eca9ef5de4fffc0db5feaa9615fb72aa00bed4e1fdbee58de13",
+    "provider.py": "f0d4b0e82d109a069a1a24f436741fe51477e9399f0206e3c2a1623f4c2cc1dc",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
-    "providers/openai.py": "cfc81048efddb3226a21f43a5bf361e8dd6d6c90b4e3596f1952264204c2a7b5",
+    "providers/openai.py": "3b14abe1f98d48f89c7b979594d6f896fa17668ffa8392c8227bb3985a594219",
     "providers/registry.py": "a6e0710e856de8e16f3e9b8e4b4dbe67ecbe31f91ba41e9dc5061f2887db6c39",
-    "repository.py": "91b1f931ca7a32b5b3ad2c120ecfc404caf2c0b5b3f83e70a049f43c2c42dfd0",
+    "repository.py": "cb6799ce8d86a6c20a5f1db51c1fd7949303b7d4c3add5a76974abac4d2c0e93",
     "schema.py": "5a61f985cae68ab1c874a1dfc440c0806572f72e196c4ac0e04d4f2094bb71ce",
     "schemas.py": "a83d4ad1fa9bb886807c756e8bd8a1409dbeb0919c378235642bf5295312dd12",
     "secrets.py": "7ecd41db715fba98ba035dd2e6cfe8505e1fa25e2a5fea825e7fed95e9b22fb9",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "tests/conftest.py": "8a153d690a1a19cce2e642dd0dce14b74c3bb578dbe9848cce36348f60c8342e",
     "tests/test_agents.py": "c2e344f7e384b72df1254fa60297d271070332da6b5f0df4f3402b7f732ca40e",
-    "tests/test_loop.py": "13e63b67b546d8d785afa95713f7955e72c6a1c704e99f579b2a865defff5134",
+    "tests/test_loop.py": "67f4d088db09ad49e6c5554dccfd53e462c18f089b994c78ac77fb22e24aff0c",
     "tests/test_oauth.py": "481114f07c17fbcbc99b74762856f4d684425cb09fe94b5503db52e8e5b8b644",
     "tests/test_provider.py": "468570fec066d0066b2718da67ebf6feba9c3292a2aa5b76d6a8a92334778922",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "bf5ef60b1e2a235c2a09b85509b7804820b2f0c632b5fbc94ec00376a9029e88"
+  "manifest_hash": "914def5b6db33197ed97c67460566d0368957f20bc20bcd32f1696a8efb9c7bc"
 }

@@ -1100,6 +1100,16 @@ class LLMRepository:
         row = self._fetch_one("SELECT status FROM llm.runs WHERE id = %s", (run_id,))
         return str(row.get("status") or "")
 
+    def update_run_trace_sync(self, run_id: str | None, trace: dict[str, Any]) -> None:
+        if not run_id or not self._psycopg_pool():
+            return
+        import json
+
+        self._fetch_one(
+            "UPDATE llm.runs SET trace = %s::jsonb, updated_at = NOW() WHERE id = %s RETURNING id",
+            (json.dumps(trace), run_id),
+        )
+
     def finish_run_sync(self, run_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         if not run_id or not self._psycopg_pool():
             return payload

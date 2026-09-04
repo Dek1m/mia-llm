@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modules.llm.loop import assemble_window, compose_system_prompt, parse_usage, run_loop
+from modules.llm.loop import assemble_window, compose_system_prompt, parse_usage, run_loop, stages_from_output
 from modules.llm.middleware import DEFAULT_PIPELINE, TurnCtx, list_catalog, run_phase
 
 
@@ -29,7 +29,7 @@ def test_compose_system_prompt_agent_and_user() -> None:
         agent_name="build",
     )
     assert text is not None
-    assert text.startswith("You are Build")
+    assert "You are Build" in text
     assert "username: sereja" in text
     assert "email: a@b.c" in text
     assert "user_prompt: Be brief" in text
@@ -38,7 +38,16 @@ def test_compose_system_prompt_agent_and_user() -> None:
 
 def test_compose_system_prompt_fallback_name() -> None:
     text = compose_system_prompt(None, None, agent_name="Athena", agent_description="Lead")
-    assert text == "You are Athena. Lead"
+    assert text is not None
+    assert "Your name is Athena" in text
+    assert "You are Athena. Lead" in text
+    assert "Claude" in text
+
+
+def test_stages_reasoning_then_answer() -> None:
+    items = stages_from_output("think", "hi", [{"name": "search", "args": "q", "status": "done"}])
+    assert [item["kind"] for item in items] == ["reasoning", "tool", "text"]
+    assert items[0]["status"] == "done"
 
 
 def test_assemble_window_system_and_history() -> None:

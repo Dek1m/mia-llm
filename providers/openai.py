@@ -40,6 +40,18 @@ llm_chat_duration_seconds = _histogram(
 )
 
 
+def _tools_from_message(message: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for raw in message.get("tool_calls") or []:
+        fn = raw.get("function") or {}
+        items.append({
+            "name": fn.get("name") or raw.get("name") or "tool",
+            "args": fn.get("arguments") or "",
+            "status": "done",
+        })
+    return items
+
+
 class OpenAIProvider(BaseProvider):
     """Провайдер для OpenAI-compatible API.
 
@@ -76,6 +88,8 @@ class OpenAIProvider(BaseProvider):
         except ImportError:
             raise RuntimeError("httpx not installed — required for OpenAI provider")
 
+        on_delta = kwargs.pop("on_delta", None)
+        extra = kwargs.pop("extra", None) or {}
         model = model or self._default_model
 
         payload: dict[str, Any] = {
@@ -86,6 +100,7 @@ class OpenAIProvider(BaseProvider):
             payload["temperature"] = temperature
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        payload.update(extra)
         payload.update(kwargs)
 
         headers: dict[str, str] = {"Content-Type": "application/json"}
@@ -95,10 +110,13 @@ class OpenAIProvider(BaseProvider):
         url = f"{self._base_url}/chat/completions"
         started = time.monotonic()
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, json=payload, headers=headers)
-                resp.raise_for_status()
-                data = resp.json()
+            if on_delta is not None:
+                data = await self._stream_chat(httpx, url, payload, headers, on_delta)
+            else:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    resp = await client.post(url, json=payload, headers=headers)
+                    resp.raise_for_status()
+                    data = resp.json()
         except Exception as exc:
             duration_s = time.monotonic() - started
             duration_ms = round(duration_s * 1000, 1)
@@ -122,7 +140,7 @@ class OpenAIProvider(BaseProvider):
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         usage = data.get("usage") or {}
-        extra = {
+        log_extra = {
             "llm.model": data.get("model", model),
             "llm.duration_ms": duration_ms,
             "llm.tokens.input": usage.get("prompt_tokens"),
@@ -130,16 +148,123 @@ class OpenAIProvider(BaseProvider):
         }
         if self._log is not None:
             if duration_ms > 500:
-                self._log.warning("llm_chat_slow", extra=extra)
+                self._log.warning("llm_chat_slow", extra=log_extra)
             else:
-                self._log.info("llm_chat_ok", extra=extra)
+                self._log.info("llm_chat_ok", extra=log_extra)
 
+        reasoning = (
+            message.get("reasoning_content")
+            or message.get("reasoning")
+            or data.get("reasoning")
+            or ""
+        )
+        tools = _tools_from_message(message)
         return {
             "content": message.get("content"),
+            "reasoning": reasoning or None,
+            "tools": tools,
             "role": message.get("role", "assistant"),
             "model": data.get("model", model),
             "finish_reason": choice.get("finish_reason"),
             "usage": data.get("usage"),
+        }
+
+    async def _stream_chat(
+        self,
+        httpx: Any,
+        url: str,
+        payload: dict[str, Any],
+        headers: dict[str, str],
+        on_delta: Any,
+    ) -> dict[str, Any]:
+        import json
+
+        from ..loop import stages_from_output
+
+        body = dict(payload)
+        body["stream"] = True
+        content_parts: list[str] = []
+        reasoning_parts: list[str] = []
+        tools: list[dict[str, Any]] = []
+        usage: dict[str, Any] = {}
+        model = str(payload.get("model") or "")
+        finish = None
+        last_emit = 0.0
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            async with client.stream("POST", url, json=body, headers=headers) as resp:
+                resp.raise_for_status()
+                async for raw in resp.aiter_lines():
+                    line = raw.strip()
+                    if not line or line.startswith(":"):
+                        continue
+                    if line.startswith("data:"):
+                        line = line[5:].strip()
+                    if line == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(chunk, dict):
+                        continue
+                    if chunk.get("usage"):
+                        usage = chunk["usage"]
+                    if chunk.get("model"):
+                        model = str(chunk["model"])
+                    choice = (chunk.get("choices") or [{}])[0]
+                    finish = choice.get("finish_reason") or finish
+                    delta = choice.get("delta") or choice.get("message") or {}
+                    piece = delta.get("content")
+                    if piece:
+                        content_parts.append(str(piece))
+                    think = (
+                        delta.get("reasoning_content")
+                        or delta.get("reasoning")
+                        or ""
+                    )
+                    if isinstance(delta.get("thinking"), str):
+                        think = think or delta.get("thinking")
+                    if think:
+                        reasoning_parts.append(str(think))
+                    for item in delta.get("tool_calls") or []:
+                        fn = item.get("function") or {}
+                        tools.append({
+                            "name": fn.get("name") or item.get("name") or "tool",
+                            "args": fn.get("arguments") or "",
+                            "status": "running",
+                        })
+                    now = time.monotonic()
+                    if now - last_emit >= 0.12:
+                        last_emit = now
+                        content = "".join(content_parts)
+                        reasoning = "".join(reasoning_parts)
+                        trace = {
+                            "content": content,
+                            "reasoning": reasoning,
+                            "stages": stages_from_output(reasoning, content, tools),
+                        }
+                        emitted = on_delta(trace)
+                        if hasattr(emitted, "__await__"):
+                            await emitted
+        content = "".join(content_parts)
+        reasoning = "".join(reasoning_parts)
+        for item in tools:
+            item["status"] = "done"
+        return {
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": content,
+                    "reasoning_content": reasoning,
+                    "tool_calls": [
+                        {"function": {"name": item["name"], "arguments": item["args"]}}
+                        for item in tools
+                    ],
+                },
+                "finish_reason": finish,
+            }],
+            "model": model,
+            "usage": usage,
         }
 
     async def models(self) -> list[str]:

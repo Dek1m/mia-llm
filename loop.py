@@ -13,6 +13,7 @@ __all__ = [
     "run_loop",
     "parse_usage",
     "mark_pipeline",
+    "stages_from_output",
 ]
 
 _USER_FIELDS = (
@@ -89,9 +90,15 @@ def compose_system_prompt(
 ) -> str | None:
     """System: промпт агента из настроек + поля залогиненного пользователя."""
     parts: list[str] = []
+    name = (agent_name or "").strip()
+    if name:
+        parts.append(
+            f"Your name is {name}. Answer only as {name}. "
+            "Do not claim to be Claude, ChatGPT, Gemini, Grok, or any other assistant "
+            "unless that is your name."
+        )
     prompt = (agent_prompt or "").strip()
     if not prompt:
-        name = (agent_name or "").strip()
         desc = (agent_description or "").strip()
         if name and desc:
             prompt = f"You are {name}. {desc}"
@@ -135,6 +142,26 @@ def assemble_window(ctx: TurnCtx, system_prompt: str | None) -> list[dict[str, s
     return messages
 
 
+def stages_from_output(reasoning: str, content: str, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if reasoning:
+        items.append({
+            "kind": "reasoning",
+            "name": "Reasoning",
+            "status": "done" if (content or tools) else "running",
+        })
+    for tool in tools:
+        items.append({
+            "kind": "tool",
+            "name": str(tool.get("name") or "tool"),
+            "args": str(tool.get("args") or ""),
+            "status": str(tool.get("status") or "done"),
+        })
+    if content:
+        items.append({"kind": "text", "name": "Answer", "status": "done"})
+    return items
+
+
 async def run_loop(
     ctx: TurnCtx,
     steps: list[dict[str, Any]],
@@ -142,17 +169,36 @@ async def run_loop(
     system_prompt: str | None,
     chat: ChatFn,
     model: str | None = None,
+    on_delta: Callable[[dict[str, Any]], Awaitable[None] | None] | None = None,
 ) -> dict[str, Any]:
     ctx = before_run(ctx)
     ctx = await run_phase(ctx, steps, "gather")
     ctx = await run_phase(ctx, steps, "transform")
     ctx.window = assemble_window(ctx, system_prompt)
-    result = await chat(messages=ctx.window, model=model)
+
+    async def _emit(trace: dict[str, Any]) -> None:
+        if on_delta is None:
+            return
+        result = on_delta(trace)
+        if hasattr(result, "__await__"):
+            await result  # type: ignore[misc]
+
+    try:
+        result = await chat(messages=ctx.window, model=model, on_delta=on_delta)
+    except TypeError:
+        result = await chat(messages=ctx.window, model=model)
     usage = parse_usage(result.get("usage") if isinstance(result, dict) else None)
     ctx.usage = usage
+    content = str((result or {}).get("content") or "") if isinstance(result, dict) else ""
+    reasoning = str((result or {}).get("reasoning") or "") if isinstance(result, dict) else ""
+    tools = list((result or {}).get("tools") or []) if isinstance(result, dict) else []
+    stages = stages_from_output(reasoning, content, tools)
+    await _emit({"content": content, "reasoning": reasoning, "stages": stages})
     episode = {
         "status": "success",
-        "content": (result or {}).get("content") if isinstance(result, dict) else None,
+        "content": content or None,
+        "reasoning": reasoning or None,
+        "stages": stages,
         "model": (result or {}).get("model") if isinstance(result, dict) else None,
         **usage,
     }

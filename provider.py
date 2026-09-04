@@ -314,10 +314,23 @@ class LLMProvider:
                 human="Finish sign-in for this provider first",
             )
         client = self._openai_client(prow, token, api_model)
+        extra: dict[str, Any] = {}
+        if bool(model_row.get("supports_reasoning")) and bool(model_row.get("reasoning_enabled")):
+            extra["reasoning_effort"] = str(model_row.get("reasoning_effort") or "medium")
 
-        async def _bound(*, messages: list[dict[str, Any]], model: str | None = None) -> dict[str, Any]:
+        async def _bound(
+            *,
+            messages: list[dict[str, Any]],
+            model: str | None = None,
+            on_delta: Any = None,
+        ) -> dict[str, Any]:
             try:
-                return await client.chat(messages=messages, model=model or api_model)
+                return await client.chat(
+                    messages=messages,
+                    model=model or api_model,
+                    extra=extra,
+                    on_delta=on_delta,
+                )
             except Exception as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", None)
                 if status not in (401, 403):
@@ -332,7 +345,12 @@ class LLMProvider:
                     raise
                 retry = self._openai_client(prow, fresh, api_model)
                 try:
-                    return await retry.chat(messages=messages, model=model or api_model)
+                    return await retry.chat(
+                        messages=messages,
+                        model=model or api_model,
+                        extra=extra,
+                        on_delta=on_delta,
+                    )
                 except Exception as retry_exc:
                     self._raise_provider_http(retry_exc)
                     raise
@@ -389,6 +407,9 @@ class LLMProvider:
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
+                )
+                db_provider.execute(
+                    "ALTER TABLE llm.runs ADD COLUMN IF NOT EXISTS trace JSONB NOT NULL DEFAULT '{}'::jsonb",
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
@@ -1388,6 +1409,8 @@ class LLMProvider:
         agent_name: str | None,
         model_name: str | None,
         parent_id: str | None = None,
+        reasoning: str | None = None,
+        stages: list[dict[str, Any]] | None = None,
     ) -> None:
         accessor = getattr(self._state, "workspace", None) if self._state is not None else None
         if accessor is None or not user_id or not content:
@@ -1401,6 +1424,10 @@ class LLMProvider:
                 payload["model_name"] = model_name
             if parent_id:
                 payload["parent_id"] = parent_id
+            if reasoning:
+                payload["reasoning"] = reasoning
+            if stages:
+                payload["stages"] = stages
             ws.insert_event(session_id, "message", role="assistant", content=content, payload=payload or None)
         except Exception as exc:
             if self._log is not None:
@@ -1428,6 +1455,7 @@ class LLMProvider:
                 "tokens_out": 0,
                 "cache_tokens": 0,
                 "cache_hits": 0,
+                "trace": {},
             }
         return {
             "id": str(row.get("id") or "") or None,
@@ -1437,6 +1465,7 @@ class LLMProvider:
             "cache_tokens": int(row.get("cache_tokens") or 0),
             "cache_hits": int(row.get("cache_hits") or 0),
             "error": row.get("error"),
+            "trace": row.get("trace") or {},
         }
 
     @task(
@@ -1610,12 +1639,17 @@ class LLMProvider:
                 },
             )
         try:
+            async def on_delta(trace: dict[str, Any]) -> None:
+                if run_id and self._repo is not None:
+                    self._repo.update_run_trace_sync(run_id, trace)
+
             episode = await run_loop(
                 ctx,
                 pipe.get("steps") or DEFAULT_PIPELINE["steps"],
                 system_prompt=system_prompt,
                 chat=chat_fn,
                 model=api_model,
+                on_delta=on_delta,
             )
             status = "success"
             error = None
@@ -1663,6 +1697,8 @@ class LLMProvider:
                 agent_row.get("name"),
                 episode.get("model") if isinstance(episode, dict) else None,
                 parent_id or None,
+                episode.get("reasoning") if isinstance(episode, dict) else None,
+                episode.get("stages") if isinstance(episode, dict) else None,
             )
         run_row = {
             "pipeline_id": pipe.get("id") if pipe.get("id") != pipe.get("slug") else None,
