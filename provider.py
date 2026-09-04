@@ -91,6 +91,7 @@ class LLMProvider:
         self._system_repo: LLMRepository | None = None
         self._database: Any = None
         self._state: Any = None
+        self._redis: Any = None
         self._provider_registry = ProviderRegistry(log=log)
         self._init_providers()
 
@@ -129,6 +130,37 @@ class LLMProvider:
         self._state = state
         self._database = database
         self.bind_pool(database.pool)
+
+    def _trace_client(self) -> Any | None:
+        if self._redis is not None:
+            return self._redis
+        try:
+            from .trace_bus import _connect
+
+            self._redis = _connect()
+        except Exception:
+            return None
+        return self._redis
+
+    def _put_live_trace(self, session_id: str, trace: dict[str, Any]) -> None:
+        try:
+            from .trace_bus import put_trace
+
+            put_trace(session_id, trace, client=self._trace_client())
+        except Exception:
+            if self._repo is not None:
+                run = self._repo.latest_run_sync(session_id)
+                rid = str(run.get("id") or "")
+                if rid:
+                    self._repo.update_run_trace_sync(rid, trace)
+
+    def _get_live_trace(self, session_id: str) -> dict[str, Any] | None:
+        try:
+            from .trace_bus import get_trace
+
+            return get_trace(session_id, client=self._trace_client())
+        except Exception:
+            return None
 
     def _open_user_repo(self, user_id: str) -> LLMRepository:
         from copy import deepcopy
@@ -1509,11 +1541,19 @@ class LLMProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         if self._repo is None or not session_id:
-            return self._public_run({})
+            live = self._get_live_trace(session_id or "")
+            return self._public_run({"status": "running", "trace": live} if live else {})
         try:
-            return self._public_run(self._repo.latest_run_sync(session_id))
+            row = self._repo.latest_run_sync(session_id)
         except Exception:
-            return self._public_run({})
+            row = {}
+        live = self._get_live_trace(session_id)
+        if live:
+            row = dict(row or {})
+            row["trace"] = live
+            if row.get("status") in (None, "idle", "running"):
+                row["status"] = "running"
+        return self._public_run(row)
 
     @task(
         type="database",
@@ -1640,8 +1680,7 @@ class LLMProvider:
             )
         try:
             async def on_delta(trace: dict[str, Any]) -> None:
-                if run_id and self._repo is not None:
-                    self._repo.update_run_trace_sync(run_id, trace)
+                self._put_live_trace(session_id, trace)
 
             episode = await run_loop(
                 ctx,
