@@ -7,21 +7,21 @@
     "middleware.py": "806e7b2a05812c9eabc0d9b2bafd62d20ca8f3ea567776b9c24fffcb6b46b19e",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "87c0fcb4938bb11d4d74314fb741713c16f256af72c68c611e8341eee75666de",
-    "provider.py": "2b771ff091ad7780579e56f691ba56bc5420361a519ec0daffbdd1d2362ddb9d",
+    "provider.py": "c4df0a08bf09bdb5fa84bb881e4c27fa375458d674407b0cb957c04a91c27750",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
     "providers/openai.py": "cfc81048efddb3226a21f43a5bf361e8dd6d6c90b4e3596f1952264204c2a7b5",
     "providers/registry.py": "a6e0710e856de8e16f3e9b8e4b4dbe67ecbe31f91ba41e9dc5061f2887db6c39",
-    "repository.py": "56273ae404eac2d8bfc10ed7eb1d85aeee2822f5f66ab4404e2a73d4cd198cf0",
+    "repository.py": "91b1f931ca7a32b5b3ad2c120ecfc404caf2c0b5b3f83e70a049f43c2c42dfd0",
     "schema.py": "5a61f985cae68ab1c874a1dfc440c0806572f72e196c4ac0e04d4f2094bb71ce",
     "schemas.py": "a83d4ad1fa9bb886807c756e8bd8a1409dbeb0919c378235642bf5295312dd12",
     "secrets.py": "7ecd41db715fba98ba035dd2e6cfe8505e1fa25e2a5fea825e7fed95e9b22fb9",
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "tests/conftest.py": "6dea8193e6ca1caf8295db57793937213e13e42f797d2a47d8d58c195b5c9b0e",
     "tests/test_agents.py": "c2e344f7e384b72df1254fa60297d271070332da6b5f0df4f3402b7f732ca40e",
-    "tests/test_loop.py": "46c13c40428940b5f390df7ac92b3f6b7cc3be7362f172c5529f619a54f3f18f",
+    "tests/test_loop.py": "6b6f9dcacb9bbfb396c092cda3e47b39d55b425a926fc67134eaceefdb6a4d37",
     "tests/test_provider.py": "43a809aab814209f650dbb334b23386ebe02f011d9ade3d851f7b32edf897056",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "c932f8d19f5e7ee5d35d7748df6168c392f987abcc6eee92b3ee5403e7b6f017"
+  "manifest_hash": "711ebe3d9f2239fd07bb930dbecdae97c0506e71ff6356b61e552a7bf6db5669"
 }

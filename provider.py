@@ -190,6 +190,91 @@ class LLMProvider:
                 return self._system_repo, row, True
         raise NotFoundError("Provider")
 
+    async def _load_agent(self, agent_id: str, user_id: str | None) -> dict[str, Any]:
+        if self._repo is not None:
+            try:
+                row = await self._repo.get_agent(agent_id)
+                if row:
+                    return row
+            except Exception:
+                pass
+        if user_id and self._database is not None and self._state is not None:
+            try:
+                row = await self._open_user_repo(str(user_id)).get_agent(agent_id)
+                if row:
+                    return row
+            except Exception:
+                pass
+        return {}
+
+    async def _load_model(self, key: str, user_id: str | None) -> dict[str, Any]:
+        if self._system_repo is not None:
+            try:
+                row = await self._system_repo.get_model(key)
+                if row:
+                    return row
+            except Exception:
+                pass
+        if user_id and self._database is not None and self._state is not None:
+            try:
+                row = await self._open_user_repo(str(user_id)).get_model(key)
+                if row:
+                    return row
+            except Exception:
+                pass
+        return {}
+
+    async def _runtime_chat(
+        self,
+        agent_row: dict[str, Any],
+        user_id: str | None,
+    ):
+        from .oauth import bearer_from_stored
+        from .providers.openai import OpenAIProvider
+
+        raw_model = str(agent_row.get("model") or "").strip()
+        if not raw_model:
+            return self._chat, None
+        model_row = await self._load_model(raw_model, user_id)
+        api_model = str(model_row.get("model_id") or raw_model)
+        provider_id = str(model_row.get("provider_id") or "")
+        if not provider_id:
+            async def _env(*, messages: list[dict[str, Any]], model: str | None = None) -> dict[str, Any]:
+                return await self._chat(messages, model=api_model)
+
+            return _env, api_model
+        _repo, prow, _common = await self._locate_provider(user_id, provider_id)
+        token = bearer_from_stored(prow.get("api_key"))
+        base = str(prow.get("base_url") or "").strip()
+        if not token or not base:
+            raise LLMError(
+                "provider credentials missing",
+                "OAUTH_PENDING",
+                human="Finish sign-in for this provider first",
+            )
+        client = OpenAIProvider(
+            name=str(prow.get("name") or "llm"),
+            base_url=base,
+            api_key=token,
+            default_model=api_model,
+            log=self._log,
+        )
+
+        async def _bound(*, messages: list[dict[str, Any]], model: str | None = None) -> dict[str, Any]:
+            try:
+                return await client.chat(messages=messages, model=model or api_model)
+            except Exception as exc:
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 401:
+                    raise LLMError(
+                        "provider unauthorized",
+                        "AUTH_ERROR",
+                        human="Provider rejected the API key",
+                    ) from exc
+                raise
+
+        return _bound, api_model
+
     @task(type="database")
     async def initialize(self, state: Any) -> None:
         """Регистрация БД-схемы и AUTH_SCHEMA."""
@@ -1383,11 +1468,8 @@ class LLMProvider:
                 "caps": DEFAULT_PIPELINE["caps"],
             }
         agent_row: dict[str, Any] = {}
-        if agent_id and self._repo is not None:
-            try:
-                agent_row = await self._repo.get_agent(agent_id) or {}
-            except Exception:
-                agent_row = {}
+        if agent_id:
+            agent_row = await self._load_agent(agent_id, _session_user_id)
         transcript = messages or self._load_transcript(workspace_id, session_id, _session_user_id)
         query = ""
         for item in reversed(transcript):
@@ -1422,6 +1504,7 @@ class LLMProvider:
             except Exception as exc:
                 if self._log is not None:
                     self._log.warning("llm_run_insert_failed", extra={"error": str(exc)})
+        chat_fn, api_model = await self._runtime_chat(agent_row, _session_user_id)
         if self._log is not None:
             self._log.info(
                 "llm_run_started",
@@ -1429,6 +1512,8 @@ class LLMProvider:
                     "llm.pipeline": pipe.get("name") or pipe.get("slug"),
                     "llm.session_id": session_id,
                     "llm.agent_id": agent_id,
+                    "llm.model": api_model,
+                    "llm.agent": agent_row.get("name"),
                 },
             )
         try:
@@ -1436,15 +1521,15 @@ class LLMProvider:
                 ctx,
                 pipe.get("steps") or DEFAULT_PIPELINE["steps"],
                 system_prompt=agent_row.get("system_prompt"),
-                chat=self._chat,
-                model=agent_row.get("model"),
+                chat=chat_fn,
+                model=api_model,
             )
             status = "success"
             error = None
             content = str(episode.get("content") or "")
         except Exception as exc:
             status = "error"
-            error = str(exc)
+            error = str(getattr(exc, "human", None) or exc)
             content = ""
             episode = {
                 "tokens_in": 0,

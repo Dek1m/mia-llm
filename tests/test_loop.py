@@ -33,6 +33,12 @@ def test_assemble_window_system_and_history() -> None:
     assert messages[-1]["role"] == "user"
 
 
+def test_get_model_lookup_exists() -> None:
+    from modules.llm.repository import LLMRepository
+
+    assert hasattr(LLMRepository, "get_model")
+
+
 @pytest.mark.asyncio
 async def test_run_loop_echoes_chat() -> None:
     async def chat(*, messages, model=None):

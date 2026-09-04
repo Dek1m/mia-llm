@@ -102,6 +102,27 @@ class LLMRepository:
         )
         return self._public_agent(dict(row) if row else {})
 
+    async def get_model(self, key: str) -> dict[str, Any] | None:
+        if not key:
+            return None
+        if self._psycopg_pool():
+            try:
+                row = self._fetch_one("SELECT * FROM llm.llm_models WHERE id = %s", (key,))
+            except Exception:
+                row = {}
+            if row:
+                return row
+            row = self._fetch_one("SELECT * FROM llm.llm_models WHERE model_id = %s", (key,))
+            return row or None
+        try:
+            row = await self._pool.fetchrow("SELECT * FROM llm.llm_models WHERE id = $1", key)
+        except Exception:
+            row = None
+        if row:
+            return dict(row)
+        row = await self._pool.fetchrow("SELECT * FROM llm.llm_models WHERE model_id = $1", key)
+        return dict(row) if row else None
+
     async def get_agent(self, agent_id: str) -> dict[str, Any] | None:
         if self._psycopg_pool():
             row = self._fetch_one(
