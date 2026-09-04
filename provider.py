@@ -307,6 +307,19 @@ class LLMProvider:
 
     def _raise_provider_http(self, exc: BaseException) -> None:
         status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 429:
+            retry_after = ""
+            try:
+                seconds = exc.response.headers.get("retry-after")
+                if seconds:
+                    retry_after = f" Retry in {seconds}s"
+            except Exception:
+                pass
+            raise LLMError(
+                "provider rate limited",
+                "RATE_LIMITED",
+                human=f"Provider hit its request limit.{retry_after} Wait a bit and try again",
+            ) from exc
         if status == 401:
             raise LLMError(
                 "provider unauthorized",
@@ -365,6 +378,9 @@ class LLMProvider:
                 )
             except Exception as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", None)
+                if status == 429:
+                    self._raise_provider_http(exc)
+                    raise
                 if status not in (401, 403):
                     raise
                 try:

@@ -52,6 +52,16 @@ def _tools_from_message(message: dict[str, Any]) -> list[dict[str, Any]]:
     return items
 
 
+def _retry_after(resp: Any, default: float = 2.0) -> float:
+    """Секунды из Retry-After; дата-формат и мусор → default, потолок 30с."""
+    raw = resp.headers.get("retry-after") if resp is not None else None
+    try:
+        value = float(str(raw).strip())
+    except (TypeError, ValueError):
+        return default
+    return min(max(value, 0.5), 30.0)
+
+
 class OpenAIProvider(BaseProvider):
     """Провайдер для OpenAI-compatible API.
 
@@ -113,10 +123,20 @@ class OpenAIProvider(BaseProvider):
             if on_delta is not None:
                 data = await self._stream_chat(httpx, url, payload, headers, on_delta)
             else:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    resp = await client.post(url, json=payload, headers=headers)
+                data = None
+                for attempt in (0, 1):  # один повтор на 429 — лимиты z.ai и подобных
+                    async with httpx.AsyncClient(timeout=self._timeout) as client:
+                        resp = await client.post(url, json=payload, headers=headers)
+                    if resp.status_code == 429 and attempt == 0:
+                        import asyncio
+
+                        await asyncio.sleep(_retry_after(resp))
+                        continue
                     resp.raise_for_status()
                     data = resp.json()
+                    break
+                if data is None:
+                    resp.raise_for_status()
         except Exception as exc:
             duration_s = time.monotonic() - started
             duration_ms = round(duration_s * 1000, 1)

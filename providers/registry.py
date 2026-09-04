@@ -136,10 +136,10 @@ def _is_retryable_error(e: Exception) -> bool:
     if error_type in retryable_types:
         return True
 
-    # HTTPStatusError с кодом 5xx
+    # HTTPStatusError с кодом 5xx или 429 (лимиты вендора — временно)
     if hasattr(e, "response") and hasattr(e.response, "status_code"):
         status = e.response.status_code
-        if 500 <= status < 600:
+        if 500 <= status < 600 or status == 429:
             return True
 
     return False

@@ -7,11 +7,11 @@
     "middleware.py": "806e7b2a05812c9eabc0d9b2bafd62d20ca8f3ea567776b9c24fffcb6b46b19e",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "201a6fb800703dd740876500bcd735b621b7258cb1f99a979034a1b731552925",
-    "provider.py": "46fa11bf7f5e8b05d32888295a7d3bf3c27927acc9bb12d45a5c2e0c48c76db3",
+    "provider.py": "8c177e35b2e064defe6d1658c9b30852561a20d93b455a529b0578f4a1bb9c13",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
-    "providers/openai.py": "3b14abe1f98d48f89c7b979594d6f896fa17668ffa8392c8227bb3985a594219",
-    "providers/registry.py": "a6e0710e856de8e16f3e9b8e4b4dbe67ecbe31f91ba41e9dc5061f2887db6c39",
+    "providers/openai.py": "48335d4b2495a85a692ec1a2595fb2b988e4de92abc47ed2605e4af8ee5a072a",
+    "providers/registry.py": "d29660b2fe2c1f23d44b690609a3dcb8e74544bb768a07478618b395010ca3a8",
     "repository.py": "cb6799ce8d86a6c20a5f1db51c1fd7949303b7d4c3add5a76974abac4d2c0e93",
     "schema.py": "5a61f985cae68ab1c874a1dfc440c0806572f72e196c4ac0e04d4f2094bb71ce",
     "schemas.py": "a83d4ad1fa9bb886807c756e8bd8a1409dbeb0919c378235642bf5295312dd12",
@@ -21,10 +21,10 @@
     "tests/test_agents.py": "c2e344f7e384b72df1254fa60297d271070332da6b5f0df4f3402b7f732ca40e",
     "tests/test_loop.py": "67f4d088db09ad49e6c5554dccfd53e462c18f089b994c78ac77fb22e24aff0c",
     "tests/test_oauth.py": "481114f07c17fbcbc99b74762856f4d684425cb09fe94b5503db52e8e5b8b644",
-    "tests/test_provider.py": "468570fec066d0066b2718da67ebf6feba9c3292a2aa5b76d6a8a92334778922",
-    "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919",
+    "tests/test_provider.py": "0c8d0ecd5a4d3e5f6ff7ee45bc5c7ac804303901d764522be2d08217a62ee451",
+    "tests/test_providers.py": "879a5436a4301e5ce724bab37a1a1a87d9623edf607db82d483c8aaadd36fc45",
     "tests/test_trace_bus.py": "a950b79e89dcc9524453aba142e2adf40fcd323d674dd277b9c8a4d7f608b975",
     "trace_bus.py": "3b335c5d12a6c6335ed17d4ec295ff779cc4e1ab87a54f979255e9673b68ecb1"
   },
-  "manifest_hash": "fac91f44333d9340cf675be8642b459ad3e77263f8489d1a9e541296c432bc5a"
+  "manifest_hash": "e145f1969b18f61d3db4b3e1c508f4885bcadb6762e22da8444151a0239a5f30"
 }

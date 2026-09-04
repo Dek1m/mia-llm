@@ -3,11 +3,50 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
 import pytest
 
 from modules.llm.providers.base import BaseProvider
 from modules.llm.providers.openai import OpenAIProvider
 from modules.llm.providers.registry import ProviderRegistry
+
+
+class _Resp:
+    def __init__(self, status: int, body: dict[str, Any] | None = None, retry_after: str | None = None) -> None:
+        self.status_code = status
+        self._body = body or {}
+        self.headers = {"retry-after": retry_after} if retry_after else {}
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            request = httpx.Request("POST", "https://vendor.test/v1/chat/completions")
+            raise httpx.HTTPStatusError(
+                f"HTTP {self.status_code}", request=request, response=httpx.Response(self.status_code)
+            )
+
+    def json(self) -> dict[str, Any]:
+        return self._body
+
+
+class _RetryClient:
+    """Отдаёт очередь ответов: 429 → 200."""
+
+    instances: list[_RetryClient] = []
+
+    def __init__(self, *, responses: list[_Resp], **_kwargs: Any) -> None:
+        self.responses = list(responses)
+        self.posts: list[dict[str, Any]] = []
+        _RetryClient.instances.append(self)
+
+    async def __aenter__(self) -> _RetryClient:
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        return None
+
+    async def post(self, url: str, json: dict[str, Any] | None = None, headers: dict[str, str] | None = None) -> _Resp:
+        self.posts.append({"url": url, "json": json})
+        return self.responses.pop(0)
 
 
 class FakeLLMProvider:
@@ -74,6 +113,24 @@ class TestOpenAIProvider:
     def test_name_property(self):
         provider = OpenAIProvider(name="my-provider")
         assert provider.name == "my-provider"
+
+    @pytest.mark.asyncio
+    async def test_chat_retries_once_on_429(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        ok = _Resp(200, {"choices": [{"message": {"role": "assistant", "content": "hi"}, "finish_reason": "stop"}], "model": "m"})
+        client = _RetryClient(responses=[_Resp(429, retry_after="0"), ok])
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        provider = OpenAIProvider(name="t", base_url="https://vendor.test/v1", api_key="k")
+        result = await provider.chat(messages=[{"role": "user", "content": "1"}])
+        assert result["content"] == "hi"
+        assert len(client.posts) == 2
+
+    @pytest.mark.asyncio
+    async def test_chat_raises_status_error_after_second_429(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        client = _RetryClient(responses=[_Resp(429, retry_after="0"), _Resp(429, retry_after="0")])
+        monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: client)
+        provider = OpenAIProvider(name="t", base_url="https://vendor.test/v1", api_key="k")
+        with pytest.raises(httpx.HTTPStatusError):
+            await provider.chat(messages=[{"role": "user", "content": "1"}])
 
 
 class TestProviderRegistry:

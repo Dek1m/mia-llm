@@ -4,6 +4,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+import httpx
 import pytest
 
 from modules.llm.oauth import pack_tokens, unpack_secret
@@ -283,3 +284,12 @@ class TestOauthRefresh:
         with pytest.raises(LLMError) as caught:
             await provider._provider_access_token(repo, prow)
         assert caught.value.code == "OAUTH_EXPIRED"
+
+    async def test_rate_limit_maps_to_human_error(self, provider: LLMProvider) -> None:
+        request = httpx.Request("POST", "https://api.z.ai/api/paas/v4/chat/completions")
+        response = httpx.Response(429, headers={"retry-after": "7"}, request=request)
+        exc = httpx.HTTPStatusError("429", request=request, response=response)
+        with pytest.raises(LLMError) as caught:
+            provider._raise_provider_http(exc)
+        assert caught.value.code == "RATE_LIMITED"
+        assert "7s" in caught.value.human
