@@ -1,0 +1,2 @@
+ALTER TABLE llm.llm_agents
+    ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;

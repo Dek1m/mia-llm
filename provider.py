@@ -241,6 +241,9 @@ class LLMProvider:
                 db_provider.execute(
                     "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
                 )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
+                )
                 self._repo.reencrypt_api_keys_sync()
             except Exception as exc:
                 if self._log is not None:
@@ -400,7 +403,7 @@ class LLMProvider:
         permission="llm:agent_manage",
         name="update_agent",
         description="Обновить агента",
-        args={"agent_id": "str", "data": "dict"},
+        args={"agent_id": "str", "data": "dict", "is_active": "bool"},
         return_type="dict",
     )
     async def update_agent(
@@ -412,6 +415,7 @@ class LLMProvider:
         description: str | None = None,
         system_prompt: str | None = None,
         model: str | None = None,
+        is_active: bool | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Обновить агента."""
@@ -421,8 +425,6 @@ class LLMProvider:
         row = await self._repo.get_agent(agent_id)
         if not row:
             raise NotFoundError("Agent")
-        if row.get("agent_type") == "system":
-            raise ForbiddenError("Cannot modify system agents")
 
         patch = dict(data or {})
         for key, value in (
@@ -431,9 +433,12 @@ class LLMProvider:
             ("description", description),
             ("system_prompt", system_prompt),
             ("model", model),
+            ("is_active", is_active),
         ):
             if value is not None:
                 patch[key] = value
+        if row.get("agent_type") == "system" and set(patch) - {"is_active"}:
+            raise ForbiddenError("Cannot modify system agents")
         if patch.get("agent_type") == "system":
             raise ForbiddenError("Cannot modify system agents")
         if patch.get("agent_type") and patch["agent_type"] not in self._AGENT_KINDS:
