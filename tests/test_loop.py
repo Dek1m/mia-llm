@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from modules.llm.loop import assemble_window, parse_usage, run_loop
+from modules.llm.loop import assemble_window, compose_system_prompt, parse_usage, run_loop
 from modules.llm.middleware import DEFAULT_PIPELINE, TurnCtx, list_catalog, run_phase
 
 
@@ -20,6 +20,25 @@ def test_parse_usage_cached() -> None:
     assert got["tokens_out"] == 4
     assert got["cache_tokens"] == 3
     assert got["cache_hits"] == 1
+
+
+def test_compose_system_prompt_agent_and_user() -> None:
+    text = compose_system_prompt(
+        "You are Build",
+        {"username": "sereja", "email": "a@b.c", "user_prompt": "Be brief", "nickname": ""},
+        agent_name="build",
+    )
+    assert text is not None
+    assert text.startswith("You are Build")
+    assert "username: sereja" in text
+    assert "email: a@b.c" in text
+    assert "user_prompt: Be brief" in text
+    assert "nickname:" not in text
+
+
+def test_compose_system_prompt_fallback_name() -> None:
+    text = compose_system_prompt(None, None, agent_name="Athena", agent_description="Lead")
+    assert text == "You are Athena. Lead"
 
 
 def test_assemble_window_system_and_history() -> None:

@@ -3,11 +3,11 @@
   "files": {
     "__init__.py": "82c3e89c00623aaca2067de1ce6fdf2c45b7c62320f097de21b00bfdeabd2049",
     "config.py": "97ab817a1f95428ffdb3e18168b42f89367aa1a5ae380392d251e05beaaf5368",
-    "loop.py": "834a961321f3c1b92dbea76b9c0a3c87c964e6d5105f56ac4174d17c17cf4c37",
+    "loop.py": "567d5316bf64c788c0aec933bf3577f98f54db24953e655f0bcb4a950ae8a172",
     "middleware.py": "806e7b2a05812c9eabc0d9b2bafd62d20ca8f3ea567776b9c24fffcb6b46b19e",
     "models.py": "842d883fd1c55d449ad34887ddc1cad59d6e433f36c746fc15fc020e289bfd86",
     "oauth.py": "201a6fb800703dd740876500bcd735b621b7258cb1f99a979034a1b731552925",
-    "provider.py": "6c9f3b21b710646521a8a599462aa17601f075f00a0ee69034acd3c25adb1082",
+    "provider.py": "dc6a75e4998c3eca9ef5de4fffc0db5feaa9615fb72aa00bed4e1fdbee58de13",
     "providers/__init__.py": "eb141eea80ecd8b3c9ebb35b0c671f71be6819af482a1fd6a69ee4a4e44fd061",
     "providers/base.py": "0a083b4ee222b1e5aff9705e8c28d50e0a32f305ea4c104d0277242b00489a7c",
     "providers/openai.py": "cfc81048efddb3226a21f43a5bf361e8dd6d6c90b4e3596f1952264204c2a7b5",
@@ -19,10 +19,10 @@
     "tests/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
     "tests/conftest.py": "8a153d690a1a19cce2e642dd0dce14b74c3bb578dbe9848cce36348f60c8342e",
     "tests/test_agents.py": "c2e344f7e384b72df1254fa60297d271070332da6b5f0df4f3402b7f732ca40e",
-    "tests/test_loop.py": "6b6f9dcacb9bbfb396c092cda3e47b39d55b425a926fc67134eaceefdb6a4d37",
+    "tests/test_loop.py": "13e63b67b546d8d785afa95713f7955e72c6a1c704e99f579b2a865defff5134",
     "tests/test_oauth.py": "481114f07c17fbcbc99b74762856f4d684425cb09fe94b5503db52e8e5b8b644",
     "tests/test_provider.py": "468570fec066d0066b2718da67ebf6feba9c3292a2aa5b76d6a8a92334778922",
     "tests/test_providers.py": "b957a2f8fa95917d90836dd0073f789314a8298ce3e25affc50e9d78ba646919"
   },
-  "manifest_hash": "59e7ace1c69ac509b2a28b250277d021ef6f79fcbdf7cecc6f2cde1b66a1833d"
+  "manifest_hash": "bf5ef60b1e2a235c2a09b85509b7804820b2f0c632b5fbc94ec00376a9029e88"
 }

@@ -1376,6 +1376,7 @@ class LLMProvider:
             content = str(item.get("content") or "")
             if role in {"user", "assistant", "system"} and content:
                 out.append({"id": str(item.get("id") or ""), "role": role, "content": content})
+        out.reverse()
         return out
 
     def _post_assistant(
@@ -1386,6 +1387,7 @@ class LLMProvider:
         content: str,
         agent_name: str | None,
         model_name: str | None,
+        parent_id: str | None = None,
     ) -> None:
         accessor = getattr(self._state, "workspace", None) if self._state is not None else None
         if accessor is None or not user_id or not content:
@@ -1397,10 +1399,25 @@ class LLMProvider:
                 payload["agent_name"] = agent_name
             if model_name:
                 payload["model_name"] = model_name
+            if parent_id:
+                payload["parent_id"] = parent_id
             ws.insert_event(session_id, "message", role="assistant", content=content, payload=payload or None)
         except Exception as exc:
             if self._log is not None:
                 self._log.warning("llm_post_assistant_failed", extra={"error": str(exc)})
+
+    async def _load_user_profile(self, user_id: str | None) -> dict[str, Any]:
+        if not user_id or self._state is None:
+            return {}
+        try:
+            from modules.auth.provider import AuthProvider
+
+            auth = self._state.services.resolve(AuthProvider)
+            return await auth.get_me(_session_user_id=str(user_id))
+        except Exception as exc:
+            if self._log is not None:
+                self._log.warning("llm_user_profile_failed", extra={"error": str(exc)})
+            return {}
 
     def _public_run(self, row: dict[str, Any]) -> dict[str, Any]:
         if not row:
@@ -1518,7 +1535,7 @@ class LLMProvider:
         messages: list[dict[str, Any]] | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        from .loop import run_loop
+        from .loop import compose_system_prompt, run_loop
         from .middleware import DEFAULT_PIPELINE, TurnCtx
 
         pipe = {}
@@ -1539,10 +1556,19 @@ class LLMProvider:
             agent_row = await self._load_agent(agent_id, _session_user_id)
         transcript = messages or self._load_transcript(workspace_id, session_id, _session_user_id)
         query = ""
+        parent_id = ""
         for item in reversed(transcript):
             if item.get("role") == "user":
                 query = str(item.get("content") or "")
+                parent_id = str(item.get("id") or "")
                 break
+        user_profile = await self._load_user_profile(_session_user_id)
+        system_prompt = compose_system_prompt(
+            agent_row.get("system_prompt"),
+            user_profile,
+            agent_name=agent_row.get("name"),
+            agent_description=agent_row.get("description"),
+        )
         caps = pipe.get("caps") or {}
         ctx = TurnCtx(
             query=query,
@@ -1587,7 +1613,7 @@ class LLMProvider:
             episode = await run_loop(
                 ctx,
                 pipe.get("steps") or DEFAULT_PIPELINE["steps"],
-                system_prompt=agent_row.get("system_prompt"),
+                system_prompt=system_prompt,
                 chat=chat_fn,
                 model=api_model,
             )
@@ -1636,6 +1662,7 @@ class LLMProvider:
                 content,
                 agent_row.get("name"),
                 episode.get("model") if isinstance(episode, dict) else None,
+                parent_id or None,
             )
         run_row = {
             "pipeline_id": pipe.get("id") if pipe.get("id") != pipe.get("slug") else None,

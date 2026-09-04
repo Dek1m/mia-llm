@@ -7,7 +7,26 @@ from prometheus_client import REGISTRY, Counter, Histogram
 
 from .middleware import TurnCtx, after_run, before_run, run_phase
 
-__all__ = ["assemble_window", "run_loop", "parse_usage", "mark_pipeline"]
+__all__ = [
+    "assemble_window",
+    "compose_system_prompt",
+    "run_loop",
+    "parse_usage",
+    "mark_pipeline",
+]
+
+_USER_FIELDS = (
+    ("username", "username"),
+    ("nickname", "nickname"),
+    ("first_name", "first_name"),
+    ("last_name", "last_name"),
+    ("date_of_birth", "date_of_birth"),
+    ("email", "email"),
+    ("phone", "phone"),
+    ("chip_display_mode", "chip_display_mode"),
+    ("primary_group_id", "primary_group_id"),
+    ("user_prompt", "user_prompt"),
+)
 
 
 def _counter(name: str, documentation: str, labelnames: list[str]) -> Counter:
@@ -59,6 +78,39 @@ def parse_usage(raw: dict[str, Any] | None) -> dict[str, int]:
         "cache_tokens": int(cached or 0),
         "cache_hits": hits,
     }
+
+
+def compose_system_prompt(
+    agent_prompt: str | None,
+    user_profile: dict[str, Any] | None = None,
+    *,
+    agent_name: str | None = None,
+    agent_description: str | None = None,
+) -> str | None:
+    """System: промпт агента из настроек + поля залогиненного пользователя."""
+    parts: list[str] = []
+    prompt = (agent_prompt or "").strip()
+    if not prompt:
+        name = (agent_name or "").strip()
+        desc = (agent_description or "").strip()
+        if name and desc:
+            prompt = f"You are {name}. {desc}"
+        elif name:
+            prompt = f"You are {name}."
+    if prompt:
+        parts.append(prompt)
+    lines: list[str] = []
+    for key, label in _USER_FIELDS:
+        value = (user_profile or {}).get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            lines.append(f"{label}: {text}")
+    if lines:
+        parts.append("User:\n" + "\n".join(lines))
+    joined = "\n\n".join(parts).strip()
+    return joined or None
 
 
 def assemble_window(ctx: TurnCtx, system_prompt: str | None) -> list[dict[str, str]]:
