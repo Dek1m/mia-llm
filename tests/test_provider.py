@@ -1,11 +1,14 @@
 """Tests for LLM Provider — chat, agents, providers, schema registration."""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
 
+from modules.llm.oauth import pack_tokens, unpack_secret
 from modules.llm.provider import LLMProvider, LLMError, NotFoundError
+import modules.llm.provider as llm_provider
 from modules.llm.config import LLMConfig, LLMProviderConfig
 from modules.llm.repository import LLMRepository
 from modules.llm.tests.conftest import FakeLLMProvider
@@ -217,9 +220,66 @@ class TestSavedProviders:
                 "expires_at": 9999999999,
             }
 
-        monkeypatch.setattr("modules.llm.provider.request_device_code", fake_device)
+        monkeypatch.setattr(llm_provider, "request_device_code", fake_device)
         row = await provider.start_oauth("xai", name="xAI")
         assert row["status"] == "authorizing"
         assert row["user_code"] == "ABCD-1234"
         assert row["vendor"] == "xai"
         assert row["provider_id"]
+
+
+class _TokenRepo:
+    def __init__(self) -> None:
+        self.blob: str | None = None
+
+    async def set_oauth_state(self, provider_id: str, api_key: str, oauth_status: str) -> dict[str, Any]:
+        self.blob = api_key
+        return {"id": provider_id, "oauth_status": oauth_status}
+
+
+@pytest.mark.asyncio
+class TestOauthRefresh:
+    async def test_refreshes_expired_access(self, provider: LLMProvider, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def fake_refresh(_vendor: object, refresh: str) -> dict[str, object]:
+            assert refresh == "r1"
+            return {"access": "fresh", "refresh": "r2", "expires_at": 9_999_999_999}
+
+        monkeypatch.setattr(llm_provider, "refresh_access_token", fake_refresh)
+        repo = _TokenRepo()
+        prow = {
+            "id": "p1",
+            "vendor": "xai",
+            "api_key": pack_tokens("old", "r1", int(time.time()) - 10),
+        }
+        token = await provider._provider_access_token(repo, prow)
+        assert token == "fresh"
+        stored = unpack_secret(repo.blob)
+        assert stored is not None
+        assert stored["access"] == "fresh"
+        assert stored["refresh"] == "r2"
+
+    async def test_skips_fresh_access(self, provider: LLMProvider, monkeypatch: pytest.MonkeyPatch) -> None:
+        async def boom(_vendor: object, _refresh: str) -> dict[str, object]:
+            raise AssertionError("must not refresh")
+
+        monkeypatch.setattr(llm_provider, "refresh_access_token", boom)
+        repo = _TokenRepo()
+        prow = {
+            "id": "p1",
+            "vendor": "xai",
+            "api_key": pack_tokens("live", "r1", int(time.time()) + 3600),
+        }
+        token = await provider._provider_access_token(repo, prow)
+        assert token == "live"
+        assert repo.blob is None
+
+    async def test_expired_without_refresh(self, provider: LLMProvider) -> None:
+        repo = _TokenRepo()
+        prow = {
+            "id": "p1",
+            "vendor": "xai",
+            "api_key": pack_tokens("old", "", int(time.time()) - 10),
+        }
+        with pytest.raises(LLMError) as caught:
+            await provider._provider_access_token(repo, prow)
+        assert caught.value.code == "OAUTH_EXPIRED"

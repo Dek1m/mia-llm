@@ -30,7 +30,7 @@ if "modules.llm" not in sys.modules:
     _fake_pkg.__package__ = "modules.llm"
     sys.modules["modules.llm"] = _fake_pkg
 
-    for submod in ["config", "schema", "schemas", "repository", "models", "middleware", "loop"]:
+    for submod in ["config", "schema", "schemas", "repository", "models", "middleware", "loop", "oauth", "secrets"]:
         file_path = _LLM_DIR / f"{submod}.py"
         if file_path.exists():
             spec = importlib.util.spec_from_file_location(

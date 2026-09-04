@@ -18,7 +18,11 @@ __all__ = [
     "pack_tokens",
     "unpack_secret",
     "bearer_from_stored",
+    "is_expired",
+    "refresh_access_token",
 ]
+
+_REFRESH_SKEW = 120
 
 
 @dataclass(frozen=True)
@@ -103,6 +107,18 @@ def bearer_from_stored(stored: str | None) -> str | None:
     return access or None
 
 
+def is_expired(data: dict[str, Any] | None, now: int | None = None, skew: int = _REFRESH_SKEW) -> bool:
+    """True если access-токен просрочен или истечёт в ближайшие skew секунд.
+    expires_at=0 — сырой API-ключ, не истекает."""
+    if not data or data.get("kind") != "token":
+        return False
+    expires_at = int(data.get("expires_at") or 0)
+    if expires_at <= 0:
+        return False
+    stamp = int(now if now is not None else time.time())
+    return expires_at <= stamp + skew
+
+
 async def request_device_code(vendor: OAuthVendor) -> dict[str, Any]:
     import httpx
 
@@ -173,6 +189,39 @@ async def poll_device_token(vendor: OAuthVendor, device_code: str) -> dict[str, 
         "status": "connected",
         "access": access,
         "refresh": str(payload.get("refresh_token") or ""),
+        "expires_at": int(time.time()) + expires_in,
+    }
+
+
+async def refresh_access_token(vendor: OAuthVendor, refresh_token: str) -> dict[str, Any]:
+    """RFC 6749 refresh_token. xAI access живёт часы — без этого chat даёт 403."""
+    import httpx
+
+    token = (refresh_token or "").strip()
+    if not token:
+        raise RuntimeError("oauth refresh missing")
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        response = await client.post(
+            vendor.token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": token,
+                "client_id": vendor.client_id,
+            },
+            headers={
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
+    payload = _json_body(response)
+    access = str(payload.get("access_token") or "")
+    if not access:
+        detail = str(payload.get("error_description") or payload.get("error") or f"http_{response.status_code}")
+        raise RuntimeError(detail)
+    expires_in = int(payload.get("expires_in") or 21600)
+    return {
+        "access": access,
+        "refresh": str(payload.get("refresh_token") or token),
         "expires_at": int(time.time()) + expires_in,
     }
 

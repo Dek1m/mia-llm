@@ -18,10 +18,12 @@ from .providers.registry import ProviderRegistry
 from .oauth import (
     bearer_from_stored,
     get_vendor,
+    is_expired,
     list_vendors,
     pack_device,
     pack_tokens,
     poll_device_token,
+    refresh_access_token,
     request_device_code,
     unpack_secret,
 )
@@ -224,14 +226,73 @@ class LLMProvider:
                 pass
         return {}
 
+    def _openai_client(self, prow: dict[str, Any], token: str, api_model: str) -> OpenAIProvider:
+        return OpenAIProvider(
+            name=str(prow.get("name") or "llm"),
+            base_url=str(prow.get("base_url") or "").strip(),
+            api_key=token,
+            default_model=api_model,
+            log=self._log,
+        )
+
+    async def _provider_access_token(
+        self,
+        repo: LLMRepository,
+        prow: dict[str, Any],
+        *,
+        force: bool = False,
+    ) -> str | None:
+        stored = prow.get("api_key")
+        data = unpack_secret(stored)
+        access = bearer_from_stored(stored)
+        if not data or data.get("kind") != "token":
+            return access
+        refresh = str(data.get("refresh") or "").strip()
+        expired = is_expired(data)
+        if expired and not refresh:
+            raise LLMError("oauth token expired", "OAUTH_EXPIRED", human="Sign-in expired. Start again")
+        if not force and not expired:
+            return access
+        if not refresh:
+            return access
+        spec = get_vendor(str(prow.get("vendor") or ""))
+        if spec is None:
+            return access
+        try:
+            result = await refresh_access_token(spec, refresh)
+        except Exception as exc:
+            if force or expired:
+                raise LLMError(
+                    str(exc),
+                    "OAUTH_EXPIRED",
+                    human="Sign-in expired. Start again",
+                ) from exc
+            return access
+        blob = pack_tokens(str(result["access"]), result.get("refresh") or refresh, int(result["expires_at"]))
+        await repo.set_oauth_state(str(prow["id"]), blob, "connected")
+        prow["api_key"] = blob
+        return str(result["access"])
+
+    def _raise_provider_http(self, exc: BaseException) -> None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 401:
+            raise LLMError(
+                "provider unauthorized",
+                "AUTH_ERROR",
+                human="Provider rejected the credentials. Sign in again",
+            ) from exc
+        if status == 403:
+            raise LLMError(
+                "provider forbidden",
+                "AUTH_ERROR",
+                human="Provider forbade this request. Sign in again or use an API key",
+            ) from exc
+
     async def _runtime_chat(
         self,
         agent_row: dict[str, Any],
         user_id: str | None,
     ):
-        from .oauth import bearer_from_stored
-        from .providers.openai import OpenAIProvider
-
         raw_model = str(agent_row.get("model") or "").strip()
         if not raw_model:
             return self._chat, None
@@ -243,8 +304,8 @@ class LLMProvider:
                 return await self._chat(messages, model=api_model)
 
             return _env, api_model
-        _repo, prow, _common = await self._locate_provider(user_id, provider_id)
-        token = bearer_from_stored(prow.get("api_key"))
+        repo, prow, _common = await self._locate_provider(user_id, provider_id)
+        token = await self._provider_access_token(repo, prow)
         base = str(prow.get("base_url") or "").strip()
         if not token or not base:
             raise LLMError(
@@ -252,26 +313,29 @@ class LLMProvider:
                 "OAUTH_PENDING",
                 human="Finish sign-in for this provider first",
             )
-        client = OpenAIProvider(
-            name=str(prow.get("name") or "llm"),
-            base_url=base,
-            api_key=token,
-            default_model=api_model,
-            log=self._log,
-        )
+        client = self._openai_client(prow, token, api_model)
 
         async def _bound(*, messages: list[dict[str, Any]], model: str | None = None) -> dict[str, Any]:
             try:
                 return await client.chat(messages=messages, model=model or api_model)
             except Exception as exc:
                 status = getattr(getattr(exc, "response", None), "status_code", None)
-                if status == 401:
-                    raise LLMError(
-                        "provider unauthorized",
-                        "AUTH_ERROR",
-                        human="Provider rejected the API key",
-                    ) from exc
-                raise
+                if status not in (401, 403):
+                    raise
+                try:
+                    fresh = await self._provider_access_token(repo, prow, force=True)
+                except LLMError:
+                    self._raise_provider_http(exc)
+                    raise
+                if not fresh or fresh == token:
+                    self._raise_provider_http(exc)
+                    raise
+                retry = self._openai_client(prow, fresh, api_model)
+                try:
+                    return await retry.chat(messages=messages, model=model or api_model)
+                except Exception as retry_exc:
+                    self._raise_provider_http(retry_exc)
+                    raise
 
         return _bound, api_model
 
@@ -893,7 +957,7 @@ class LLMProvider:
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         repo, row, _common = await self._locate_provider(_session_user_id, provider_id)
-        token = bearer_from_stored(row.get("api_key"))
+        token = await self._provider_access_token(repo, row)
         base = row.get("base_url")
         if not token or not base:
             raise LLMError("sign-in is not finished", "OAUTH_PENDING", human="Finish sign-in first")
@@ -1030,7 +1094,10 @@ class LLMProvider:
         vanished: list[dict[str, Any]] = []
         for repo in repos:
             for row in await repo.list_providers_with_secrets():
-                key = bearer_from_stored(row.get("api_key"))
+                try:
+                    key = await self._provider_access_token(repo, row)
+                except LLMError:
+                    continue
                 base = row.get("base_url")
                 if not key or not base:
                     continue
