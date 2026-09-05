@@ -1835,6 +1835,15 @@ class LLMProvider:
             )
         except Exception:
             pass
+        try:
+            # Стрим окончен: ответ уже в БД и в payload, живой след больше не нужен.
+            # Иначе Redis хранит текст ещё 15 мин, и полл после перезагрузки
+            # превращает его в дубль-облачко "running".
+            from .trace_bus import clear_trace
+
+            clear_trace(session_id, client=self._trace_client())
+        except Exception:
+            pass
         public = self._public_run(run_row)
         public["content"] = content or None
         return public
