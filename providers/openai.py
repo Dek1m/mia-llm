@@ -32,8 +32,12 @@ def _histogram(name: str, documentation: str) -> Histogram:
 llm_chat_total = _counter(
     "llm_chat_total",
     "Total LLM chat completions",
-    ["status"],
+    ["status", "model"],
 )
+
+# LLM-ответы длятся секунды и минуты — 500ms порог означал «slow» на каждом
+# запросе. 30s — действительно аномальная задержка (таймауты провайдеров выше).
+_SLOW_MS = 30_000
 llm_chat_duration_seconds = _histogram(
     "llm_chat_duration_seconds",
     "LLM chat completion duration in seconds",
@@ -125,7 +129,7 @@ class OpenAIProvider(BaseProvider):
             else:
                 data = None
                 for attempt in (0, 1):  # один повтор на 429 — лимиты z.ai и подобных
-                    async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    async with httpx.AsyncClient(timeout=self._timeout, follow_redirects=False) as client:
                         resp = await client.post(url, json=payload, headers=headers)
                     if resp.status_code == 429 and attempt == 0:
                         import asyncio
@@ -140,12 +144,13 @@ class OpenAIProvider(BaseProvider):
         except Exception as exc:
             duration_s = time.monotonic() - started
             duration_ms = round(duration_s * 1000, 1)
-            llm_chat_total.labels(status="error").inc()
+            llm_chat_total.labels(status="error", model=model).inc()
             llm_chat_duration_seconds.observe(duration_s)
             if self._log is not None:
                 self._log.error(
                     "llm_chat_failed",
                     extra={
+                        "llm.provider": self._name,
                         "llm.model": model,
                         "llm.duration_ms": duration_ms,
                         "error_type": type(exc).__name__,
@@ -155,19 +160,20 @@ class OpenAIProvider(BaseProvider):
 
         duration_s = time.monotonic() - started
         duration_ms = round(duration_s * 1000, 1)
-        llm_chat_total.labels(status="ok").inc()
+        llm_chat_total.labels(status="ok", model=model).inc()
         llm_chat_duration_seconds.observe(duration_s)
         choice = (data.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         usage = data.get("usage") or {}
         log_extra = {
+            "llm.provider": self._name,
             "llm.model": data.get("model", model),
             "llm.duration_ms": duration_ms,
             "llm.tokens.input": usage.get("prompt_tokens"),
             "llm.tokens.output": usage.get("completion_tokens"),
         }
         if self._log is not None:
-            if duration_ms > 500:
+            if duration_ms > _SLOW_MS:
                 self._log.warning("llm_chat_slow", extra=log_extra)
             else:
                 self._log.info("llm_chat_ok", extra=log_extra)
@@ -210,7 +216,7 @@ class OpenAIProvider(BaseProvider):
         model = str(payload.get("model") or "")
         finish = None
         last_emit = 0.0
-        client = httpx.AsyncClient(timeout=self._timeout)
+        client = httpx.AsyncClient(timeout=self._timeout, follow_redirects=False)
         resp_ctx: Any = None
         try:
             # один вежливый повтор на 429 — как в нестримовом пути.
@@ -322,7 +328,7 @@ class OpenAIProvider(BaseProvider):
 
         url = f"{self._base_url}/models"
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            async with httpx.AsyncClient(timeout=10.0, follow_redirects=False) as client:
                 resp = await client.get(url, headers=headers)
                 resp.raise_for_status()
                 data = resp.json()
@@ -345,7 +351,7 @@ class OpenAIProvider(BaseProvider):
 
         url = f"{self._base_url}/models"
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=False) as client:
                 resp = await client.get(url, headers=headers)
                 return resp.status_code == 200
         except Exception:

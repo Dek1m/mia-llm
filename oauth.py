@@ -122,7 +122,7 @@ def is_expired(data: dict[str, Any] | None, now: int | None = None, skew: int = 
 async def request_device_code(vendor: OAuthVendor) -> dict[str, Any]:
     import httpx
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         response = await client.post(
             vendor.device_url,
             data={"client_id": vendor.client_id, "scope": vendor.scope},
@@ -156,7 +156,7 @@ async def request_device_code(vendor: OAuthVendor) -> dict[str, Any]:
 async def poll_device_token(vendor: OAuthVendor, device_code: str) -> dict[str, Any]:
     import httpx
 
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         response = await client.post(
             vendor.token_url,
             data={
@@ -200,7 +200,7 @@ async def refresh_access_token(vendor: OAuthVendor, refresh_token: str) -> dict[
     token = (refresh_token or "").strip()
     if not token:
         raise RuntimeError("oauth refresh missing")
-    async with httpx.AsyncClient(timeout=20.0) as client:
+    async with httpx.AsyncClient(timeout=20.0, follow_redirects=False) as client:
         response = await client.post(
             vendor.token_url,
             data={

@@ -3,15 +3,31 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 
 PREFIX = "v1:"
 
 __all__ = ["encrypt_secret", "decrypt_secret", "is_encrypted"]
 
+_log = logging.getLogger(__name__)
+_fallback_warned = False
+
 
 def _key() -> bytes:
-    raw = os.getenv("LLM_SECRETS_KEY") or os.getenv("AUTH_JWT_SECRET") or ""
+    global _fallback_warned
+    raw = os.getenv("LLM_SECRETS_KEY") or ""
+    if not raw:
+        # Fail-closed не делаем: смена ключа обесценит ciphertext в БД и прод
+        # встанет. Но ротация AUTH_JWT_SECRET молча сломает decrypt — предупреждаем.
+        raw = os.getenv("AUTH_JWT_SECRET") or ""
+        if raw and not _fallback_warned:
+            _fallback_warned = True
+            _log.warning(
+                "llm_secrets_key_fallback: LLM_SECRETS_KEY is not set, "
+                "using AUTH_JWT_SECRET — rotating the JWT secret will break "
+                "stored provider keys",
+            )
     if not raw:
         raise RuntimeError("LLM_SECRETS_KEY or AUTH_JWT_SECRET is required")
     return hashlib.sha256(raw.encode("utf-8")).digest()

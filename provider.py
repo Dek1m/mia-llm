@@ -92,6 +92,11 @@ class LLMProvider:
         self._database: Any = None
         self._state: Any = None
         self._redis: Any = None
+        # user_id → repo. Кеш: схема user-БД применяется один раз (ADR-004),
+        # повторный _open_user_repo без register_schema/CREATE-шторма.
+        # Не потокобезопасно, но celery prefork — отдельные процессы,
+        # а внутри процесса async однопоточный — гонки нет.
+        self._user_repos: dict[str, LLMRepository] = {}
         self._provider_registry = ProviderRegistry(log=log)
         self._init_providers()
 
@@ -125,6 +130,7 @@ class LLMProvider:
         """Пул на воркере без повторного apply_schema."""
         self._repo = LLMRepository(pool, log=self._log)
         self._system_repo = self._repo
+        self._user_repos.clear()
 
     def bind_runtime(self, state: Any, database: Any) -> None:
         self._state = state
@@ -146,7 +152,7 @@ class LLMProvider:
         try:
             from .trace_bus import put_trace
 
-            put_trace(session_id, trace, client=self._trace_client())
+            put_trace(str(user_id or ""), session_id, trace, client=self._trace_client())
         except Exception:
             repo = self._runs_repo(user_id)
             if repo is not None:
@@ -155,11 +161,11 @@ class LLMProvider:
                 if rid:
                     repo.update_run_trace_sync(rid, trace)
 
-    def _get_live_trace(self, session_id: str) -> dict[str, Any] | None:
+    def _get_live_trace(self, session_id: str, user_id: str | None = None) -> dict[str, Any] | None:
         try:
             from .trace_bus import get_trace
 
-            return get_trace(session_id, client=self._trace_client())
+            return get_trace(str(user_id or ""), session_id, client=self._trace_client())
         except Exception:
             return None
 
@@ -175,6 +181,10 @@ class LLMProvider:
             return None
 
     def _open_user_repo(self, user_id: str) -> LLMRepository:
+        cached = self._user_repos.get(user_id)
+        if cached is not None:
+            return cached
+
         from copy import deepcopy
 
         from modules.workspace.schemas import user_dbname
@@ -183,8 +193,8 @@ class LLMProvider:
             self._state.workspace(user=user_id)
         dbname = user_dbname(user_id)
         pool = self._database.get_pool(dbname)
-        # ddl_dir сюда нельзя: ddl-файлы ссылаются на auth/system, которых в user-БД нет,
-        # а 004 — DELETE. Нужное создаём идемпотентно ниже.
+        # ddl_dir сюда нельзя: ddl-файлы ссылаются на auth/system, которых в user-БД нет.
+        # Нужное создаём идемпотентно ниже — один раз на процесс (кеш выше).
         self._database.register_schema(
             "llm",
             deepcopy(DB_SCHEMA),
@@ -228,7 +238,9 @@ class LLMProvider:
                     "CREATE INDEX IF NOT EXISTS llm_runs_session_created "
                     "ON llm.runs (session_id, created_at DESC)"
                 )
-        return LLMRepository(pool, log=self._log)
+        repo = LLMRepository(pool, log=self._log)
+        self._user_repos[user_id] = repo
+        return repo
 
     def _providers_repo(self, user_id: str | None, *, common: bool = False) -> LLMRepository:
         if common:
@@ -1594,13 +1606,13 @@ class LLMProvider:
     ) -> dict[str, Any]:
         runs_repo = self._runs_repo(_session_user_id)
         if runs_repo is None or not session_id:
-            live = self._get_live_trace(session_id or "")
+            live = self._get_live_trace(session_id or "", _session_user_id)
             return self._public_run({"status": "running", "trace": live} if live else {})
         try:
             row = runs_repo.latest_run_sync(session_id)
         except Exception:
             row = {}
-        live = self._get_live_trace(session_id)
+        live = self._get_live_trace(session_id, _session_user_id)
         if live:
             row = dict(row or {})
             row["trace"] = live
@@ -1707,7 +1719,7 @@ class LLMProvider:
         try:
             from .trace_bus import clear_trace
 
-            clear_trace(session_id, client=self._trace_client())
+            clear_trace(str(_session_user_id or ""), session_id, client=self._trace_client())
         except Exception:
             pass
         run_id: str | None = None
@@ -1737,6 +1749,8 @@ class LLMProvider:
                     "llm.agent_id": agent_id,
                     "llm.model": api_model,
                     "llm.agent": agent_row.get("name"),
+                    "llm.run_id": run_id,
+                    "user_id": _session_user_id,
                 },
             )
         try:
@@ -1765,7 +1779,16 @@ class LLMProvider:
                 "cache_hits": 0,
             }
             if self._log is not None:
-                self._log.warning("llm_run_pipeline_failed", extra={"error": error})
+                self._log.exception(
+                    "llm_run_pipeline_failed",
+                    extra={
+                        "error": error,
+                        "error_type": type(exc).__name__,
+                        "llm.session_id": session_id,
+                        "llm.run_id": run_id,
+                        "user_id": _session_user_id,
+                    },
+                )
         if run_id and runs_repo is not None:
             try:
                 if runs_repo.run_status_sync(run_id) == "cancelled":
@@ -1786,6 +1809,10 @@ class LLMProvider:
                     "llm.tokens.input": episode.get("tokens_in"),
                     "llm.tokens.output": episode.get("tokens_out"),
                     "llm.cache.tokens": episode.get("cache_tokens"),
+                    "llm.session_id": session_id,
+                    "llm.run_id": run_id,
+                    "llm.workspace_id": workspace_id,
+                    "user_id": _session_user_id,
                 },
             )
         if content and status != "cancelled":
@@ -1828,6 +1855,7 @@ class LLMProvider:
             from .trace_bus import add_chat_tokens
 
             add_chat_tokens(
+                str(_session_user_id or ""),
                 session_id,
                 int(episode.get("tokens_in") or 0),
                 int(episode.get("tokens_out") or 0),
@@ -1841,7 +1869,7 @@ class LLMProvider:
             # превращает его в дубль-облачко "running".
             from .trace_bus import clear_trace
 
-            clear_trace(session_id, client=self._trace_client())
+            clear_trace(str(_session_user_id or ""), session_id, client=self._trace_client())
         except Exception:
             pass
         public = self._public_run(run_row)
@@ -1866,7 +1894,51 @@ def _validate_base_url(base_url: str) -> str:
     parsed = urlparse(raw)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise LLMError("Wrong URL", "WRONG_URL")
+    _reject_private_host(parsed.hostname or "")
     return raw
+
+
+def _private_base_allowed() -> bool:
+    import os
+
+    # Локальные llama.cpp/ollama — только по явному флагу; в проде не выставлен
+    return os.environ.get("LLM_ALLOW_PRIVATE_BASE", "").strip().lower() == "true"
+
+
+def _reject_private_host(hostname: str) -> None:
+    """SSRF-guard: base_url не должен указывать на приватные/служебные адреса.
+
+    Резолвим hostname до IP и отклоняем loopback/link-local/private/reserved —
+    иначе пользовательский провайдер может зондировать внутреннюю сеть
+    (169.254.169.254 metadata, 127.0.0.1 сервисы контейнера и т.п.).
+    """
+    import ipaddress
+    import socket
+
+    if not hostname or _private_base_allowed():
+        return
+    try:
+        ips = [ipaddress.ip_address(hostname.strip("[]"))]
+    except ValueError:
+        try:
+            infos = socket.getaddrinfo(hostname, None)
+        except OSError as exc:
+            raise LLMError("Wrong URL", "WRONG_URL") from exc
+        ips = [ipaddress.ip_address(str(info[4][0])) for info in infos]
+    for ip in ips:
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_unspecified
+            or ip.is_multicast
+        ):
+            raise LLMError(
+                f"private address is not allowed as base_url host: {hostname}",
+                "WRONG_URL",
+                human="Wrong URL",
+            )
 
 
 def _models_endpoint(base_url: str) -> str:
