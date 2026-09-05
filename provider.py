@@ -92,11 +92,10 @@ class LLMProvider:
         self._database: Any = None
         self._state: Any = None
         self._redis: Any = None
-        # user_id → repo. Кеш: схема user-БД применяется один раз (ADR-004),
-        # повторный _open_user_repo без register_schema/CREATE-шторма.
-        # Не потокобезопасно, но celery prefork — отдельные процессы,
-        # а внутри процесса async однопоточный — гонки нет.
-        self._user_repos: dict[str, LLMRepository] = {}
+        # User_id, чья схема уже применена в этом процессе (ADR-004, без DDL-шторма).
+        # Кешируем ФАКТ provisioning, а не LLMRepository: db-модуль закрывает named-пулы
+        # по idle-таймауту и пересоздаёт их, закешированный repo держал бы мёртвый пул.
+        self._provisioned_users: set[str] = set()
         self._provider_registry = ProviderRegistry(log=log)
         self._init_providers()
 
@@ -130,7 +129,7 @@ class LLMProvider:
         """Пул на воркере без повторного apply_schema."""
         self._repo = LLMRepository(pool, log=self._log)
         self._system_repo = self._repo
-        self._user_repos.clear()
+        self._provisioned_users.clear()
 
     def bind_runtime(self, state: Any, database: Any) -> None:
         self._state = state
@@ -181,10 +180,6 @@ class LLMProvider:
             return None
 
     def _open_user_repo(self, user_id: str) -> LLMRepository:
-        cached = self._user_repos.get(user_id)
-        if cached is not None:
-            return cached
-
         from copy import deepcopy
 
         from modules.workspace.schemas import user_dbname
@@ -192,9 +187,14 @@ class LLMProvider:
         if self._state is not None:
             self._state.workspace(user=user_id)
         dbname = user_dbname(user_id)
+        # Пул берём заново каждый раз: db-модуль закрывает named-пулы по idle-таймауту
+        # и пересоздаёт их. Кешировать LLMRepository (и его пул) нельзя — получим
+        # PoolClosed. Кешируем только факт применения схемы (она живёт в БД).
         pool = self._database.get_pool(dbname)
+        if user_id in self._provisioned_users:
+            return LLMRepository(pool, log=self._log)
         # ddl_dir сюда нельзя: ddl-файлы ссылаются на auth/system, которых в user-БД нет.
-        # Нужное создаём идемпотентно ниже — один раз на процесс (кеш выше).
+        # Нужное создаём идемпотентно ниже — один раз на процесс.
         self._database.register_schema(
             "llm",
             deepcopy(DB_SCHEMA),
@@ -238,9 +238,8 @@ class LLMProvider:
                     "CREATE INDEX IF NOT EXISTS llm_runs_session_created "
                     "ON llm.runs (session_id, created_at DESC)"
                 )
-        repo = LLMRepository(pool, log=self._log)
-        self._user_repos[user_id] = repo
-        return repo
+        self._provisioned_users.add(user_id)
+        return LLMRepository(pool, log=self._log)
 
     def _providers_repo(self, user_id: str | None, *, common: bool = False) -> LLMRepository:
         if common:
