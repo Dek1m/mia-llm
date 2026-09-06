@@ -411,7 +411,13 @@ class LLMProvider:
         client = self._openai_client(prow, token, api_model)
         extra: dict[str, Any] = {}
         if bool(model_row.get("supports_reasoning")) and bool(model_row.get("reasoning_enabled")):
-            extra["reasoning_effort"] = str(model_row.get("reasoning_effort") or "medium")
+            # Приоритет режима: агент → модель каталога → системный medium.
+            effort = str(agent_row.get("reasoning_effort") or "").strip().lower()
+            if effort not in {"low", "medium", "high", "none"}:
+                effort = str(model_row.get("reasoning_effort") or "").strip().lower()
+            if effort not in {"low", "medium", "high", "none"}:
+                effort = "medium"
+            extra["reasoning_effort"] = effort
 
         async def _bound(
             *,
@@ -505,6 +511,17 @@ class LLMProvider:
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
+                )
+                # Окно контекста и режимы reasoning отдаёт не сам OpenAI-протокол,
+                # а расширенные ответы совместимых провайдеров (OpenRouter/vLLM/LM Studio).
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS context_length INTEGER",
+                )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_modes TEXT",
+                )
+                db_provider.execute(
+                    "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS reasoning_effort TEXT",
                 )
                 db_provider.execute(
                     "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE",
@@ -638,6 +655,7 @@ class LLMProvider:
         args={
             "name": "str", "agent_type": "str", "description": "str",
             "system_prompt": "str", "model": "str", "workspace_id": "str",
+            "reasoning_effort": "str",
         },
         return_type="dict",
     )
@@ -650,6 +668,7 @@ class LLMProvider:
         model: str | None = None,
         workspace_id: str | None = None,
         owner_id: str | None = None,
+        reasoning_effort: str | None = None,
         _session_user_id: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
@@ -674,6 +693,7 @@ class LLMProvider:
             model=model,
             workspace_id=workspace_id,
             owner_id=owner_id or _session_user_id,
+            reasoning_effort=_clean_effort(reasoning_effort),
         )
         return row
 
@@ -689,6 +709,7 @@ class LLMProvider:
             "is_active": "bool",
             "is_visible": "bool",
             "is_default": "bool",
+            "reasoning_effort": "str",
         },
         return_type="dict",
     )
@@ -704,6 +725,7 @@ class LLMProvider:
         is_active: bool | None = None,
         is_visible: bool | None = None,
         is_default: bool | None = None,
+        reasoning_effort: str | None = None,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Обновить агента."""
@@ -724,6 +746,7 @@ class LLMProvider:
             ("is_active", is_active),
             ("is_visible", is_visible),
             ("is_default", is_default),
+            ("reasoning_effort", _clean_effort(reasoning_effort)),
         ):
             if value is not None:
                 patch[key] = value
@@ -1657,6 +1680,7 @@ class LLMProvider:
             "session_id": "str",
             "pipeline_id": "str",
             "agent_id": "str",
+            "reasoning_effort": "str",
         },
         return_type="dict",
     )
@@ -1667,6 +1691,7 @@ class LLMProvider:
         pipeline_id: str | None = None,
         agent_id: str | None = None,
         messages: list[dict[str, Any]] | None = None,
+        reasoning_effort: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
         from .loop import compose_system_prompt, run_loop
@@ -1688,6 +1713,10 @@ class LLMProvider:
         agent_row: dict[str, Any] = {}
         if agent_id:
             agent_row = await self._load_agent(agent_id, _session_user_id)
+        # Разовый override режима из дока SPA: выше конфига агента, ниже гейта модели.
+        effort_override = (reasoning_effort or "").strip().lower()
+        if effort_override in {"low", "medium", "high", "none"}:
+            agent_row["reasoning_effort"] = effort_override
         transcript = messages or self._load_transcript(workspace_id, session_id, _session_user_id)
         query = ""
         parent_id = ""
@@ -1980,9 +2009,61 @@ def _parse_models(payload: Any) -> list[dict[str, Any]]:
                 "id": mid,
                 "name": mid,
                 "supports_reasoning": _supports_reasoning(mid, extra),
+                "context_length": _context_length(extra),
+                "reasoning_modes": _reasoning_modes(mid, extra),
             }
         )
     return items
+
+
+def _context_length(extra: dict[str, Any] | None) -> int | None:
+    """Окно контекста из расширенных полей совместимых провайдеров.
+
+    OpenRouter — context_length, vLLM — max_model_len, LM Studio — max_context_length.
+    """
+    if not extra:
+        return None
+    for key in ("context_length", "max_model_len", "max_context_length", "context_window"):
+        value = extra.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)) and value > 0:
+            return int(value)
+    nested = extra.get("top_provider")
+    if isinstance(nested, dict):
+        value = nested.get("context_length")
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+            return int(value)
+    return None
+
+
+def _reasoning_modes(model_id: str, extra: dict[str, Any] | None) -> str | None:
+    """CSV режимов reasoning. Провайдер перечисляет редко — канон low,medium,high."""
+    if not extra:
+        return "low,medium,high" if _supports_reasoning(model_id, extra) else None
+    raw = extra.get("reasoning_modes") or extra.get("reasoning_efforts")
+    if isinstance(raw, list) and raw:
+        modes = [str(item).strip().lower() for item in raw if str(item).strip()]
+        modes = [m for m in modes if m in {"low", "medium", "high", "none", "minimal"}]
+        if modes:
+            return ",".join(modes)
+    params = extra.get("supported_parameters")
+    if isinstance(params, list) and "reasoning" in [str(p).lower() for p in params]:
+        return "low,medium,high"
+    config = extra.get("reasoning_config")
+    if isinstance(config, dict):
+        if config.get("allow_reasoning") is True or isinstance(config.get("efforts"), list):
+            return "low,medium,high"
+    return "low,medium,high" if _supports_reasoning(model_id, extra) else None
+
+
+_VALID_EFFORTS = {"low", "medium", "high", "none"}
+
+
+def _clean_effort(value: Any) -> str | None:
+    """Нормализация режима reasoning агента; всё невалидное — None (наследование у модели)."""
+    effort = str(value or "").strip().lower()
+    return effort if effort in _VALID_EFFORTS else None
 
 
 def _supports_reasoning(model_id: str, extra: dict[str, Any] | None) -> bool:
@@ -1991,6 +2072,12 @@ def _supports_reasoning(model_id: str, extra: dict[str, Any] | None) -> bool:
             return True
         caps = extra.get("capabilities")
         if isinstance(caps, dict) and (caps.get("reasoning") or caps.get("thinking")):
+            return True
+        params = extra.get("supported_parameters")
+        if isinstance(params, list) and "reasoning" in [str(p).lower() for p in params]:
+            return True
+        config = extra.get("reasoning_config")
+        if isinstance(config, dict) and config.get("allow_reasoning") is True:
             return True
     name = model_id.lower()
     markers = (

@@ -293,3 +293,52 @@ class TestOauthRefresh:
             provider._raise_provider_http(exc)
         assert caught.value.code == "RATE_LIMITED"
         assert "7s" in caught.value.human
+
+class TestParseModelsContext:
+    """Расширенные поля провайдеров: окно контекста и режимы reasoning."""
+
+    def test_openrouter_context_length(self) -> None:
+        items = llm_provider._parse_models(
+            {"data": [{"id": "a", "context_length": 200000, "supported_parameters": ["reasoning"]}]}
+        )
+        assert items[0]["context_length"] == 200000
+        assert items[0]["reasoning_modes"] == "low,medium,high"
+        assert items[0]["supports_reasoning"] is True
+
+    def test_vllm_max_model_len(self) -> None:
+        items = llm_provider._parse_models({"data": [{"id": "m", "max_model_len": 32768}]})
+        assert items[0]["context_length"] == 32768
+
+    def test_lm_studio_max_context_length(self) -> None:
+        items = llm_provider._parse_models(
+            {"data": [{"id": "m", "max_context_length": 8192, "reasoning_config": {"allow_reasoning": True}}]}
+        )
+        assert items[0]["context_length"] == 8192
+        assert items[0]["reasoning_modes"] == "low,medium,high"
+
+    def test_openrouter_nested_top_provider(self) -> None:
+        items = llm_provider._parse_models(
+            {"data": [{"id": "b", "top_provider": {"context_length": 128000}}]}
+        )
+        assert items[0]["context_length"] == 128000
+
+    def test_plain_openai_has_no_context(self) -> None:
+        items = llm_provider._parse_models({"data": [{"id": "gpt-4o", "object": "model"}]})
+        assert items[0]["context_length"] is None
+        assert items[0]["reasoning_modes"] is None or items[0]["reasoning_modes"] == "low,medium,high"
+
+    def test_non_reasoning_model_without_modes(self) -> None:
+        items = llm_provider._parse_models({"data": [{"id": "llama-3-8b"}]})
+        assert items[0]["reasoning_modes"] is None
+
+    def test_explicit_efforts_list_wins(self) -> None:
+        items = llm_provider._parse_models(
+            {"data": [{"id": "x", "reasoning_efforts": ["low", "high"]}]}
+        )
+        assert items[0]["reasoning_modes"] == "low,high"
+
+    def test_clean_effort(self) -> None:
+        assert llm_provider._clean_effort("HIGH") == "high"
+        assert llm_provider._clean_effort("medium") == "medium"
+        assert llm_provider._clean_effort("yoba") is None
+        assert llm_provider._clean_effort(None) is None

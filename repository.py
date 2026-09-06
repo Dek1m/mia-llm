@@ -60,6 +60,7 @@ class LLMRepository:
         settings: dict[str, Any] | None = None,
         workspace_id: str | None = None,
         owner_id: str | None = None,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         import json
         args = (
@@ -71,17 +72,19 @@ class LLMRepository:
             json.dumps(settings or {}),
             workspace_id,
             owner_id,
+            reasoning_effort,
         )
         if self._psycopg_pool():
             row = self._fetch_one(
                 "INSERT INTO llm.llm_agents "
-                "(name, agent_type, description, system_prompt, model, settings, workspace_id, owner_id) "
-                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s) "
+                "(name, agent_type, description, system_prompt, model, settings, workspace_id, owner_id, reasoning_effort) "
+                "VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s) "
                 "ON CONFLICT (name) DO UPDATE SET "
                 "description = EXCLUDED.description, "
                 "system_prompt = EXCLUDED.system_prompt, "
                 "model = EXCLUDED.model, "
                 "settings = EXCLUDED.settings, "
+                "reasoning_effort = EXCLUDED.reasoning_effort, "
                 "updated_at = NOW() "
                 "RETURNING *",
                 args,
@@ -89,13 +92,14 @@ class LLMRepository:
             return self._public_agent(row)
         row = await self._pool.fetchrow(
             "INSERT INTO llm.llm_agents "
-            "(name, agent_type, description, system_prompt, model, settings, workspace_id, owner_id) "
-            "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8) "
+            "(name, agent_type, description, system_prompt, model, settings, workspace_id, owner_id, reasoning_effort) "
+            "VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9) "
             "ON CONFLICT (name) DO UPDATE SET "
             "description = EXCLUDED.description, "
             "system_prompt = EXCLUDED.system_prompt, "
             "model = EXCLUDED.model, "
             "settings = EXCLUDED.settings, "
+            "reasoning_effort = EXCLUDED.reasoning_effort, "
             "updated_at = NOW() "
             "RETURNING *",
             *args,
@@ -168,7 +172,7 @@ class LLMRepository:
         allowed = {
             "name", "agent_type", "description", "system_prompt", "model",
             "settings", "workspace_id", "owner_id", "is_active",
-            "is_visible", "is_default",
+            "is_visible", "is_default", "reasoning_effort",
         }
         set_parts = []
         params: list[Any] = []
@@ -469,14 +473,16 @@ class LLMRepository:
                             cur.execute(
                                 "INSERT INTO llm.llm_models "
                                 "(provider_id, model_id, display_name, enabled, is_available, "
-                                "supports_reasoning, reasoning_enabled, reasoning_effort) "
-                                "VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s) "
+                                "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes) "
+                                "VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s) "
                                 "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
                                 "display_name = EXCLUDED.display_name, "
                                 "enabled = EXCLUDED.enabled, "
                                 "supports_reasoning = EXCLUDED.supports_reasoning, "
                                 "reasoning_enabled = EXCLUDED.reasoning_enabled, "
                                 "reasoning_effort = EXCLUDED.reasoning_effort, "
+                                "context_length = EXCLUDED.context_length, "
+                                "reasoning_modes = EXCLUDED.reasoning_modes, "
                                 "is_available = TRUE, updated_at = NOW()",
                                 (
                                     provider_id,
@@ -486,6 +492,8 @@ class LLMRepository:
                                     bool(item.get("supports_reasoning", False)),
                                     bool(item.get("reasoning_enabled", False)),
                                     item.get("reasoning_effort"),
+                                    item.get("context_length"),
+                                    item.get("reasoning_modes"),
                                 ),
                             )
             public = self._public_provider(row)
@@ -505,8 +513,8 @@ class LLMRepository:
                 await self._pool.fetchrow(
                     "INSERT INTO llm.llm_models "
                     "(provider_id, model_id, display_name, enabled, is_available, "
-                    "supports_reasoning, reasoning_enabled, reasoning_effort) "
-                    "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7) RETURNING *",
+                    "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes) "
+                    "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9) RETURNING *",
                     provider_id,
                     item["model_id"],
                     item.get("display_name") or item["model_id"],
@@ -514,6 +522,8 @@ class LLMRepository:
                     bool(item.get("supports_reasoning", False)),
                     bool(item.get("reasoning_enabled", False)),
                     item.get("reasoning_effort"),
+                    item.get("context_length"),
+                    item.get("reasoning_modes"),
                 )
         public = self._public_provider(data)
         public["models"] = await self.list_models(str(provider_id)) if provider_id else []
@@ -523,13 +533,13 @@ class LLMRepository:
         if self._psycopg_pool():
             return self._fetch_all(
                 "SELECT id, provider_id, model_id, display_name, enabled, is_available, "
-                "supports_reasoning, reasoning_enabled, reasoning_effort "
+                "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes "
                 "FROM llm.llm_models WHERE provider_id = %s ORDER BY display_name",
                 (provider_id,),
             )
         rows = await self._pool.fetch(
             "SELECT id, provider_id, model_id, display_name, enabled, is_available, "
-            "supports_reasoning, reasoning_enabled, reasoning_effort "
+            "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes "
             "FROM llm.llm_models WHERE provider_id = $1 ORDER BY display_name",
             provider_id,
         )
@@ -643,14 +653,14 @@ class LLMRepository:
             row = self._fetch_one(
                 "UPDATE llm.llm_models SET enabled = %s, updated_at = NOW() "
                 "WHERE id = %s RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
-                "supports_reasoning, reasoning_enabled, reasoning_effort",
+                "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes",
                 (enabled, model_uuid),
             )
             return row
         row = await self._pool.fetchrow(
             "UPDATE llm.llm_models SET enabled = $1, updated_at = NOW() "
             "WHERE id = $2 RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
-            "supports_reasoning, reasoning_enabled, reasoning_effort",
+            "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes",
             enabled,
             model_uuid,
         )
@@ -667,14 +677,14 @@ class LLMRepository:
                 "UPDATE llm.llm_models SET reasoning_enabled = %s, reasoning_effort = %s, "
                 "updated_at = NOW() WHERE id = %s AND supports_reasoning = TRUE "
                 "RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
-                "supports_reasoning, reasoning_enabled, reasoning_effort",
+                "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes",
                 (reasoning_enabled, reasoning_effort, model_uuid),
             )
         row = await self._pool.fetchrow(
             "UPDATE llm.llm_models SET reasoning_enabled = $1, reasoning_effort = $2, "
             "updated_at = NOW() WHERE id = $3 AND supports_reasoning = TRUE "
             "RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
-            "supports_reasoning, reasoning_enabled, reasoning_effort",
+            "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes",
             reasoning_enabled,
             reasoning_effort,
             model_uuid,
@@ -748,14 +758,16 @@ class LLMRepository:
                         cur.execute(
                             "INSERT INTO llm.llm_models "
                             "(provider_id, model_id, display_name, enabled, is_available, "
-                            "supports_reasoning, reasoning_enabled, reasoning_effort) "
-                            "VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s) "
+                            "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes) "
+                            "VALUES (%s, %s, %s, %s, TRUE, %s, %s, %s, %s, %s) "
                             "ON CONFLICT (provider_id, model_id) DO UPDATE SET "
                             "display_name = EXCLUDED.display_name, "
                             "enabled = EXCLUDED.enabled, "
                             "supports_reasoning = EXCLUDED.supports_reasoning, "
                             "reasoning_enabled = EXCLUDED.reasoning_enabled, "
                             "reasoning_effort = EXCLUDED.reasoning_effort, "
+                            "context_length = EXCLUDED.context_length, "
+                            "reasoning_modes = EXCLUDED.reasoning_modes, "
                             "is_available = TRUE, updated_at = NOW()",
                             (
                                 provider_id,
@@ -765,6 +777,8 @@ class LLMRepository:
                                 bool(item.get("supports_reasoning", False)),
                                 bool(item.get("reasoning_enabled", False)),
                                 item.get("reasoning_effort"),
+                                item.get("context_length"),
+                                item.get("reasoning_modes"),
                             ),
                         )
             return
@@ -772,8 +786,8 @@ class LLMRepository:
             await self._pool.fetchrow(
                 "INSERT INTO llm.llm_models "
                 "(provider_id, model_id, display_name, enabled, is_available, "
-                "supports_reasoning, reasoning_enabled, reasoning_effort) "
-                "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7) RETURNING *",
+                "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes) "
+                "VALUES ($1, $2, $3, $4, TRUE, $5, $6, $7, $8, $9) RETURNING *",
                 provider_id,
                 item["model_id"],
                 item.get("display_name") or item["model_id"],
@@ -781,6 +795,8 @@ class LLMRepository:
                 bool(item.get("supports_reasoning", False)),
                 bool(item.get("reasoning_enabled", False)),
                 item.get("reasoning_effort"),
+                item.get("context_length"),
+                item.get("reasoning_modes"),
             )
 
     def reencrypt_api_keys_sync(self) -> int:
@@ -811,13 +827,13 @@ class LLMRepository:
             return self._fetch_one(
                 "UPDATE llm.llm_models SET display_name = %s, updated_at = NOW() "
                 "WHERE id = %s RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
-                "supports_reasoning, reasoning_enabled, reasoning_effort",
+                "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes",
                 (name, model_uuid),
             )
         row = await self._pool.fetchrow(
             "UPDATE llm.llm_models SET display_name = $1, updated_at = NOW() "
             "WHERE id = $2 RETURNING id, provider_id, model_id, display_name, enabled, is_available, "
-            "supports_reasoning, reasoning_enabled, reasoning_effort",
+            "supports_reasoning, reasoning_enabled, reasoning_effort, context_length, reasoning_modes",
             name,
             model_uuid,
         )

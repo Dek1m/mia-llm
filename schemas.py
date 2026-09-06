@@ -21,6 +21,7 @@ DB_SCHEMA: dict[str, dict[str, Any]] = {
             # UUID без FK: workspace.workspaces живёт в per-user БД, не в belle.
             "workspace_id": "UUID",
             "owner_id": "UUID",
+            "reasoning_effort": "TEXT",
             "is_active": "BOOLEAN DEFAULT TRUE",
             "is_visible": "BOOLEAN NOT NULL DEFAULT TRUE",
             "is_default": "BOOLEAN NOT NULL DEFAULT FALSE",
@@ -100,6 +101,9 @@ DB_SCHEMA: dict[str, dict[str, Any]] = {
             "supports_reasoning": "BOOLEAN NOT NULL DEFAULT FALSE",
             "reasoning_enabled": "BOOLEAN NOT NULL DEFAULT FALSE",
             "reasoning_effort": "TEXT",
+            # Окно контекста и режимы — отдают расширенные ответы совместимых провайдеров.
+            "context_length": "INTEGER",
+            "reasoning_modes": "TEXT",
             "created_at": "TIMESTAMPTZ DEFAULT NOW()",
             "updated_at": "TIMESTAMPTZ DEFAULT NOW()",
         },
