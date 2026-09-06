@@ -325,7 +325,9 @@ class TestParseModelsContext:
     def test_plain_openai_has_no_context(self) -> None:
         items = llm_provider._parse_models({"data": [{"id": "gpt-4o", "object": "model"}]})
         assert items[0]["context_length"] is None
-        assert items[0]["reasoning_modes"] is None or items[0]["reasoning_modes"] == "low,medium,high"
+        # Без явных данных вендора шкалу не пишем — канон живёт на фронте,
+        # фактическую шкалу выясняет probe-через-ошибку.
+        assert items[0]["reasoning_modes"] is None
 
     def test_non_reasoning_model_without_modes(self) -> None:
         items = llm_provider._parse_models({"data": [{"id": "llama-3-8b"}]})
@@ -349,8 +351,9 @@ class TestReasoningFamilies:
     def test_glm_family(self) -> None:
         for mid in ("glm-4.5", "glm-4.6", "glm-5.3", "glm-5.3-flash"):
             assert llm_provider._supports_reasoning(mid, None) is True, mid
+            # Шкалу не эвристим: z.ai не валидирует параметр, probe тоже бессилен.
             items = llm_provider._parse_models({"data": [{"id": mid}]})
-            assert items[0]["reasoning_modes"] == "low,medium,high", mid
+            assert items[0]["reasoning_modes"] is None, mid
 
     def test_deepseek_v4_and_reasoner(self) -> None:
         for mid in ("deepseek-v4-pro", "deepseek-v3.1", "deepseek-reasoner"):
@@ -420,11 +423,11 @@ class TestReasoningPayload:
         assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "medium") == {"reasoning_effort": "high"}
         assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", None) == {}
 
-    def test_catalog_modes_are_canonical(self) -> None:
-        # Хардкодов шкал больше нет: каталог отдаёт канон, точную шкалу выясняет probe.
+    def test_catalog_modes_need_vendor_data(self) -> None:
+        # Шкала пишется только из явных данных вендора или probe-через-ошибку.
         items = llm_provider._parse_models({"data": [{"id": "grok-4.6"}, {"id": "grok-3-mini"}]})
-        assert items[0]["reasoning_modes"] == "low,medium,high"
-        assert items[1]["reasoning_modes"] == "low,medium,high"
+        assert items[0]["reasoning_modes"] is None
+        assert items[1]["reasoning_modes"] is None
 
     def test_deepseek_no_param(self) -> None:
         from modules.llm.reasoning_payload import reasoning_payload

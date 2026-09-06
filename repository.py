@@ -661,13 +661,15 @@ class LLMRepository:
         if not items:
             return
         sql = (
-            "UPDATE llm.llm_models SET supports_reasoning = %s, context_length = %s, "
-            "reasoning_modes = %s, updated_at = NOW() "
+            "UPDATE llm.llm_models SET supports_reasoning = %s, "
+            "context_length = COALESCE(%s, context_length), "
+            "reasoning_modes = COALESCE(%s, reasoning_modes), updated_at = NOW() "
             "WHERE provider_id = %s AND model_id = %s"
         )
         sql_pg = (
-            "UPDATE llm.llm_models SET supports_reasoning = $1, context_length = $2, "
-            "reasoning_modes = $3, updated_at = NOW() "
+            "UPDATE llm.llm_models SET supports_reasoning = $1, "
+            "context_length = COALESCE($2, context_length), "
+            "reasoning_modes = COALESCE($3, reasoning_modes), updated_at = NOW() "
             "WHERE provider_id = $4 AND model_id = $5"
         )
         if self._psycopg_pool():

@@ -2140,24 +2140,26 @@ def _context_length(extra: dict[str, Any] | None) -> int | None:
 
 
 def _reasoning_modes(model_id: str, extra: dict[str, Any] | None) -> str | None:
-    """CSV режимов reasoning. Точную шкалу вендора выясняет probe-через-ошибку."""
-    if extra:
-        raw = extra.get("reasoning_modes") or extra.get("reasoning_efforts")
-        if isinstance(raw, list) and raw:
-            modes = [str(item).strip().lower() for item in raw if str(item).strip()]
-            modes = [m for m in modes if m in {"min", "low", "medium", "high", "max", "none"}]
-            if modes:
-                return ",".join(modes)
-        params = extra.get("supported_parameters")
-        if isinstance(params, list) and "reasoning" in [str(p).lower() for p in params]:
-            return "low,medium,high"
-        config = extra.get("reasoning_config")
-        if isinstance(config, dict):
-            if config.get("allow_reasoning") is True or isinstance(config.get("efforts"), list):
-                return "low,medium,high"
-    # Точную шкалу вендора выясняет probe через ошибку валидации; здесь канон.
-    if _supports_reasoning(model_id, extra):
+    """CSV режимов reasoning — только явные данные вендора.
+
+    Канон low,medium,high не пишем: мягкие вендоры (z.ai) не валидируют параметр,
+    и канон затирал бы фактическую шкалу, выясненную probe-через-ошибку.
+    """
+    if not extra:
+        return None
+    raw = extra.get("reasoning_modes") or extra.get("reasoning_efforts")
+    if isinstance(raw, list) and raw:
+        modes = [str(item).strip().lower() for item in raw if str(item).strip()]
+        modes = [m for m in modes if m in {"min", "low", "medium", "high", "max", "none"}]
+        if modes:
+            return ",".join(modes)
+    params = extra.get("supported_parameters")
+    if isinstance(params, list) and "reasoning" in [str(p).lower() for p in params]:
         return "low,medium,high"
+    config = extra.get("reasoning_config")
+    if isinstance(config, dict):
+        if config.get("allow_reasoning") is True or isinstance(config.get("efforts"), list):
+            return "low,medium,high"
     return None
 
 
