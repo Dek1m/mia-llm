@@ -238,6 +238,17 @@ class LLMProvider:
                     "CREATE INDEX IF NOT EXISTS llm_runs_session_created "
                     "ON llm.runs (session_id, created_at DESC)"
                 )
+                # register_schema не альтерит существующие таблицы — колонки
+                # context_length/reasoning_modes/reasoning_effort докатываем сами.
+                cur.execute(
+                    "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS context_length INTEGER"
+                )
+                cur.execute(
+                    "ALTER TABLE llm.llm_models ADD COLUMN IF NOT EXISTS reasoning_modes TEXT"
+                )
+                cur.execute(
+                    "ALTER TABLE llm.llm_agents ADD COLUMN IF NOT EXISTS reasoning_effort TEXT"
+                )
         self._provisioned_users.add(user_id)
         return LLMRepository(pool, log=self._log)
 
