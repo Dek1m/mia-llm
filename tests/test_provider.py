@@ -363,3 +363,64 @@ class TestReasoningFamilies:
     def test_non_reasoning_stays_false(self) -> None:
         for mid in ("gpt-4o", "claude-3-5-haiku", "llama-3-8b", "text-embedding-3"):
             assert llm_provider._supports_reasoning(mid, None) is False, mid
+
+class TestReasoningPayload:
+    """Вендор-адаптер: у каждого провайдера свой параметр reasoning."""
+
+    def test_zai_glm_thinking_switch(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload("https://api.z.ai/api/paas/v4", "glm-5.3", "high") == {
+            "thinking": {"type": "enabled"}
+        }
+        assert reasoning_payload("https://api.z.ai/api/paas/v4", "glm-5.3-flash", "low") == {
+            "thinking": {"type": "enabled"}
+        }
+        assert reasoning_payload("https://api.z.ai/api/paas/v4", "glm-5.3", "none") == {
+            "thinking": {"type": "disabled"}
+        }
+        assert reasoning_payload("https://api.z.ai/api/paas/v4", "glm-5.3", None) == {}
+
+    def test_qwen_enable_thinking(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload(
+            "https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3.8-max", "medium"
+        ) == {"enable_thinking": True}
+        assert reasoning_payload(
+            "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1", "qwen3.8-max", "none"
+        ) == {"enable_thinking": False}
+
+    def test_openrouter_reasoning_object(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload("https://openrouter.ai/api/v1", "x/y", "high") == {
+            "reasoning": {"effort": "high"}
+        }
+        assert reasoning_payload("https://openrouter.ai/api/v1", "x/y", "none") == {
+            "reasoning": {"enabled": False}
+        }
+
+    def test_xai_only_grok3mini_low_high(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "low") == {"reasoning_effort": "low"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "medium") == {"reasoning_effort": "high"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "none") == {}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4", "high") == {}
+
+    def test_deepseek_no_param(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload("https://api.deepseek.com/v1", "deepseek-v4-pro", "high") == {}
+
+    def test_generic_reasoning_effort(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload("https://api.openai.com/v1", "gpt-5", "medium") == {
+            "reasoning_effort": "medium"
+        }
+        assert reasoning_payload("https://api.openai.com/v1", "gpt-5", "none") == {}
+        assert reasoning_payload("https://unknown.vendor.example/v1", "zzz", "low") == {
+            "reasoning_effort": "low"
+        }

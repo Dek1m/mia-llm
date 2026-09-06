@@ -420,15 +420,17 @@ class LLMProvider:
                 human="Finish sign-in for this provider first",
             )
         client = self._openai_client(prow, token, api_model)
+        # У вендоров параметр reasoning называется по-разному — payload собирает адаптер.
+        effort = str(agent_row.get("reasoning_effort") or "").strip().lower()
+        if effort not in {"low", "medium", "high", "none"}:
+            effort = str(model_row.get("reasoning_effort") or "").strip().lower()
+        if effort not in {"low", "medium", "high", "none"}:
+            effort = "medium"
+        from .reasoning_payload import reasoning_payload
+
         extra: dict[str, Any] = {}
         if bool(model_row.get("supports_reasoning")) and bool(model_row.get("reasoning_enabled")):
-            # Приоритет режима: агент → модель каталога → системный medium.
-            effort = str(agent_row.get("reasoning_effort") or "").strip().lower()
-            if effort not in {"low", "medium", "high", "none"}:
-                effort = str(model_row.get("reasoning_effort") or "").strip().lower()
-            if effort not in {"low", "medium", "high", "none"}:
-                effort = "medium"
-            extra["reasoning_effort"] = effort
+            extra = reasoning_payload(str(prow.get("base_url") or ""), api_model, effort)
 
         async def _bound(
             *,
