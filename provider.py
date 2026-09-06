@@ -1562,7 +1562,26 @@ class LLMProvider:
         except httpx.RequestError as exc:
             raise LLMError("Wrong URL", "WRONG_URL") from exc
         if response.status_code >= 400:
-            raise LLMError("Wrong URL", "WRONG_URL")
+            # Тело вендора — единственный источник истины (401 ключ / 403 права / 404 путь).
+            snippet = (response.text or "").strip()[:200]
+            if self._log is not None:
+                self._log.warning(
+                    "llm_models_http_error",
+                    extra={"url": url, "status": response.status_code, "body": snippet},
+                )
+            if response.status_code in {401, 403}:
+                raise LLMError(
+                    "provider rejected credentials",
+                    "AUTH_ERROR",
+                    human=f"Provider answered {response.status_code}: {snippet or 'check the key'}",
+                )
+            if response.status_code == 404:
+                raise LLMError("Wrong URL", "WRONG_URL")
+            raise LLMError(
+                f"provider returned {response.status_code}",
+                "PROVIDER_ERROR",
+                human=f"Provider answered {response.status_code}: {snippet or 'unknown error'}",
+            )
         try:
             payload = response.json()
         except Exception as exc:
