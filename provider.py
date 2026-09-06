@@ -285,6 +285,23 @@ class LLMProvider:
                 return self._system_repo, row, True
         raise NotFoundError("Provider")
 
+    async def _locate_model_repo(
+        self, user_id: str | None, model_id: str,
+    ) -> tuple[LLMRepository, bool]:
+        """Модель живёт в per-user или в общем каталоге (common-провайдер).
+
+        Возвращает (repo, is_common); запись в общий каталог требует права.
+        """
+        if user_id and self._database is not None and self._state is not None:
+            urepo = self._open_user_repo(str(user_id))
+            if await urepo.get_model(model_id):
+                return urepo, False
+        if self._system_repo is not None and await self._system_repo.get_model(model_id):
+            if not await self._can_manage_common(user_id):
+                raise ForbiddenError("Cannot change an organization provider")
+            return self._system_repo, True
+        raise NotFoundError("Model")
+
     async def _load_agent(self, agent_id: str, user_id: str | None) -> dict[str, Any]:
         if self._repo is not None:
             try:
@@ -1205,7 +1222,7 @@ class LLMProvider:
         model_id: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        repo = self._providers_repo(_session_user_id)
+        repo, _common = await self._locate_model_repo(_session_user_id, model_id)
         deleted = await repo.delete_model(model_id)
         if not deleted:
             raise NotFoundError("Model")
@@ -1293,7 +1310,7 @@ class LLMProvider:
         enabled: bool,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        repo = self._providers_repo(_session_user_id)
+        repo, _common = await self._locate_model_repo(_session_user_id, model_id)
         row = await repo.set_model_enabled(model_id, bool(enabled))
         if not row:
             raise NotFoundError("Model")
@@ -1314,7 +1331,7 @@ class LLMProvider:
         display_name: str,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        repo = self._providers_repo(_session_user_id)
+        repo, _common = await self._locate_model_repo(_session_user_id, model_id)
         name = (display_name or "").strip()
         if not name:
             raise LLMError("display_name required", "INVALID_NAME")
@@ -1338,7 +1355,9 @@ class LLMProvider:
         enabled: bool,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        repo = self._providers_repo(_session_user_id)
+        repo, row, _common = await self._locate_provider(_session_user_id, provider_id)
+        if row.get("owned") is False:
+            raise ForbiddenError("Cannot change an organization provider")
         count = await repo.set_provider_models_enabled(provider_id, bool(enabled))
         return {"ok": True, "count": count, "enabled": bool(enabled)}
 
@@ -1358,7 +1377,7 @@ class LLMProvider:
         reasoning_effort: str | None = None,
         _session_user_id: str | None = None,
     ) -> dict[str, Any]:
-        repo = self._providers_repo(_session_user_id)
+        repo, _common = await self._locate_model_repo(_session_user_id, model_id)
         effort = (reasoning_effort or "medium").strip().lower()
         if effort not in {"none", "low", "medium", "high"}:
             effort = "medium"
