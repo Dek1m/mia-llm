@@ -648,6 +648,53 @@ class LLMRepository:
                     vanished.append(item)
         return vanished
 
+    async def sync_remote_model_meta(
+        self,
+        provider_id: str,
+        items: list[dict[str, Any]],
+    ) -> None:
+        """Докатить детектированные метаданные (reasoning/окно) к сохранённым моделям.
+
+        Ручные настройки пользователя (enabled, reasoning_enabled, reasoning_effort)
+        не трогаем — обновляется только то, что детектируется из ответа вендора.
+        """
+        if not items:
+            return
+        sql = (
+            "UPDATE llm.llm_models SET supports_reasoning = %s, context_length = %s, "
+            "reasoning_modes = %s, updated_at = NOW() "
+            "WHERE provider_id = %s AND model_id = %s"
+        )
+        sql_pg = (
+            "UPDATE llm.llm_models SET supports_reasoning = $1, context_length = $2, "
+            "reasoning_modes = $3, updated_at = NOW() "
+            "WHERE provider_id = $4 AND model_id = $5"
+        )
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    for item in items:
+                        cur.execute(
+                            sql,
+                            (
+                                bool(item.get("supports_reasoning", False)),
+                                item.get("context_length"),
+                                item.get("reasoning_modes"),
+                                provider_id,
+                                str(item.get("id") or ""),
+                            ),
+                        )
+            return
+        for item in items:
+            await self._pool.execute(
+                sql_pg,
+                bool(item.get("supports_reasoning", False)),
+                item.get("context_length"),
+                item.get("reasoning_modes"),
+                provider_id,
+                str(item.get("id") or ""),
+            )
+
     async def set_model_enabled(self, model_uuid: str, enabled: bool) -> dict[str, Any]:
         if self._psycopg_pool():
             row = self._fetch_one(

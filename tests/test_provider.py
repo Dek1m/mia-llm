@@ -342,3 +342,24 @@ class TestParseModelsContext:
         assert llm_provider._clean_effort("medium") == "medium"
         assert llm_provider._clean_effort("yoba") is None
         assert llm_provider._clean_effort(None) is None
+
+class TestReasoningFamilies:
+    """Семейства с гибридным thinking детектируются по имени (вендоры /models не отдают caps)."""
+
+    def test_glm_family(self) -> None:
+        for mid in ("glm-4.5", "glm-4.6", "glm-5.3", "glm-5.3-flash"):
+            assert llm_provider._supports_reasoning(mid, None) is True, mid
+            items = llm_provider._parse_models({"data": [{"id": mid}]})
+            assert items[0]["reasoning_modes"] == "low,medium,high", mid
+
+    def test_deepseek_v4_and_reasoner(self) -> None:
+        for mid in ("deepseek-v4-pro", "deepseek-v3.1", "deepseek-reasoner"):
+            assert llm_provider._supports_reasoning(mid, None) is True, mid
+
+    def test_qwen3_family(self) -> None:
+        for mid in ("qwen3.8-max", "qwen3-32b"):
+            assert llm_provider._supports_reasoning(mid, None) is True, mid
+
+    def test_non_reasoning_stays_false(self) -> None:
+        for mid in ("gpt-4o", "claude-3-5-haiku", "llama-3-8b", "text-embedding-3"):
+            assert llm_provider._supports_reasoning(mid, None) is False, mid

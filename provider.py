@@ -1262,6 +1262,9 @@ class LLMProvider:
                         )
                     continue
                 missing = await repo.replace_remote_models(str(row["id"]), remote)
+                # Вендоры без capability-полей в /models всё же меняют каталог —
+                # сверка обновляет и детектированные reasoning/окно моделей.
+                await repo.sync_remote_model_meta(str(row["id"]), remote_items)
                 for item in missing:
                     vanished.append(
                         {
@@ -2093,6 +2096,7 @@ def _supports_reasoning(model_id: str, extra: dict[str, Any] | None) -> bool:
     name = model_id.lower()
     markers = (
         "reasoning",
+        "reasoner",
         "think",
         "-r1",
         "o1",
@@ -2101,5 +2105,14 @@ def _supports_reasoning(model_id: str, extra: dict[str, Any] | None) -> bool:
         "gpt-5",
         "grok-3-mini",
         "grok-4",
+        # GLM 4.5+ — гибридный thinking у всей серии, включая flash/air.
+        "glm-4.5",
+        "glm-4.6",
+        "glm-5",
+        # DeepSeek v3.1+/v4 — гибриды с thinking; классический reasoner покрыт "reasoner".
+        "deepseek-v3",
+        "deepseek-v4",
+        # Qwen3 — вся серия умеет thinking.
+        "qwen3",
     )
     return any(marker in name for marker in markers)
