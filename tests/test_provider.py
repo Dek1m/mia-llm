@@ -408,7 +408,6 @@ class TestReasoningPayload:
         assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "medium") == {"reasoning_effort": "low"}
         assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "max") == {"reasoning_effort": "high"}
         assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "none") == {}
-        assert reasoning_payload("https://api.x.ai/v1", "grok-4", "high") == {}
 
     def test_grok4_full_scale(self) -> None:
         from modules.llm.reasoning_payload import reasoning_payload
