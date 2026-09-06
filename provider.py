@@ -1284,6 +1284,11 @@ class LLMProvider:
                 # Вендоры без capability-полей в /models всё же меняют каталог —
                 # сверка обновляет и детектированные reasoning/окно моделей.
                 await repo.sync_remote_model_meta(str(row["id"]), remote_items)
+                # Точные шкалы reasoning: probe невалидным значением, валидатор
+                # вендора перечисляет уровни в тексте 400.
+                await self._probe_provider_efforts(
+                    repo, str(row["id"]), str(base), str(key), remote_items
+                )
                 for item in missing:
                     vanished.append(
                         {
@@ -1481,6 +1486,68 @@ class LLMProvider:
             seen.add(pid)
             extra.append(public)
         return extra
+
+    async def _probe_model_efforts(
+        self, base_url: str, api_key: str, model_id: str
+    ) -> list[str] | None:
+        """Шкала reasoning из ошибки валидации: шлём заведомо невалидное значение."""
+        import httpx
+
+        from .reasoning_payload import parse_efforts_from_error, reasoning_probe_payload
+
+        payload = reasoning_probe_payload(base_url, model_id)
+        if payload is None:
+            return None
+        url = _validate_base_url(base_url).rstrip("/") + "/chat/completions"
+        try:
+            async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+        except httpx.RequestError:
+            return None
+        if response.status_code != 400:
+            return None
+        message = ""
+        try:
+            data = response.json()
+            error = data.get("error") if isinstance(data, dict) else None
+            if isinstance(error, dict):
+                message = str(error.get("message") or "")
+            elif isinstance(data, dict):
+                message = str(data.get("message") or data.get("detail") or "")
+        except Exception:
+            message = response.text
+        return parse_efforts_from_error(message)
+
+    async def _probe_provider_efforts(
+        self,
+        repo: LLMRepository,
+        provider_id: str,
+        base_url: str,
+        api_key: str,
+        remote_items: list[dict[str, Any]],
+    ) -> None:
+        """Докатить фактические шкалы reasoning-моделей провайдера (probe-через-ошибку)."""
+        for item in remote_items:
+            if not item.get("supports_reasoning"):
+                continue
+            model_id = str(item.get("id") or "")
+            if not model_id:
+                continue
+            try:
+                efforts = await self._probe_model_efforts(base_url, api_key, model_id)
+            except Exception as exc:
+                if self._log is not None:
+                    self._log.warning(
+                        "llm_effort_probe_failed",
+                        extra={"provider_id": provider_id, "model_id": model_id, "error": str(exc)},
+                    )
+                continue
+            if efforts:
+                await repo.update_model_modes(provider_id, model_id, ",".join(efforts))
 
     async def _fetch_remote_models(self, base_url: str, api_key: str) -> list[dict[str, Any]]:
         import httpx
@@ -2073,8 +2140,7 @@ def _context_length(extra: dict[str, Any] | None) -> int | None:
 
 
 def _reasoning_modes(model_id: str, extra: dict[str, Any] | None) -> str | None:
-    """CSV режимов reasoning. Провайдер перечисляет редко — канон по семействам."""
-    name = model_id.lower()
+    """CSV режимов reasoning. Точную шкалу вендора выясняет probe-через-ошибку."""
     if extra:
         raw = extra.get("reasoning_modes") or extra.get("reasoning_efforts")
         if isinstance(raw, list) and raw:
@@ -2089,11 +2155,7 @@ def _reasoning_modes(model_id: str, extra: dict[str, Any] | None) -> str | None:
         if isinstance(config, dict):
             if config.get("allow_reasoning") is True or isinstance(config.get("efforts"), list):
                 return "low,medium,high"
-    # Шкалы вендоров: у grok-4.x четыре уровня, grok-3-mini — только low|high.
-    if "grok-4" in name:
-        return "min,low,high,max"
-    if "grok-3-mini" in name:
-        return "low,high"
+    # Точную шкалу вендора выясняет probe через ошибку валидации; здесь канон.
     if _supports_reasoning(model_id, extra):
         return "low,medium,high"
     return None

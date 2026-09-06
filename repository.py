@@ -695,6 +695,30 @@ class LLMRepository:
                 str(item.get("id") or ""),
             )
 
+    async def update_model_modes(
+        self,
+        provider_id: str,
+        model_id: str,
+        reasoning_modes: str,
+    ) -> None:
+        """Записать фактическую шкалу reasoning, выясненную probe-через-ошибку."""
+        if self._psycopg_pool():
+            with self._pool.connection() as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE llm.llm_models SET reasoning_modes = %s, updated_at = NOW() "
+                        "WHERE provider_id = %s AND model_id = %s",
+                        (reasoning_modes, provider_id, model_id),
+                    )
+            return
+        await self._pool.execute(
+            "UPDATE llm.llm_models SET reasoning_modes = $1, updated_at = NOW() "
+            "WHERE provider_id = $2 AND model_id = $3",
+            reasoning_modes,
+            provider_id,
+            model_id,
+        )
+
     async def set_model_enabled(self, model_uuid: str, enabled: bool) -> dict[str, Any]:
         if self._psycopg_pool():
             row = self._fetch_one(

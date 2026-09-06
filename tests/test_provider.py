@@ -420,10 +420,11 @@ class TestReasoningPayload:
         assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "medium") == {"reasoning_effort": "high"}
         assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", None) == {}
 
-    def test_grok4_modes_catalog(self) -> None:
+    def test_catalog_modes_are_canonical(self) -> None:
+        # Хардкодов шкал больше нет: каталог отдаёт канон, точную шкалу выясняет probe.
         items = llm_provider._parse_models({"data": [{"id": "grok-4.6"}, {"id": "grok-3-mini"}]})
-        assert items[0]["reasoning_modes"] == "min,low,high,max"
-        assert items[1]["reasoning_modes"] == "low,high"
+        assert items[0]["reasoning_modes"] == "low,medium,high"
+        assert items[1]["reasoning_modes"] == "low,medium,high"
 
     def test_deepseek_no_param(self) -> None:
         from modules.llm.reasoning_payload import reasoning_payload
@@ -440,3 +441,43 @@ class TestReasoningPayload:
         assert reasoning_payload("https://unknown.vendor.example/v1", "zzz", "low") == {
             "reasoning_effort": "low"
         }
+
+class TestEffortProbe:
+    """Шкала reasoning из ошибки валидации на заведомо невалидное значение."""
+
+    def test_probe_payload_per_vendor(self) -> None:
+        from modules.llm.reasoning_payload import PROBE_EFFORT, reasoning_probe_payload
+
+        p = reasoning_probe_payload("https://api.x.ai/v1", "grok-4.6")
+        assert p is not None and p["reasoning_effort"] == PROBE_EFFORT
+        p = reasoning_probe_payload("https://api.z.ai/api/paas/v4", "glm-5.3")
+        assert p is not None and p["thinking"]["type"] == PROBE_EFFORT
+        p = reasoning_probe_payload("https://openrouter.ai/api/v1", "a/b")
+        assert p is not None and p["reasoning"]["effort"] == PROBE_EFFORT
+        assert reasoning_probe_payload("https://dashscope.aliyuncs.com/compatible-mode/v1", "qwen3.8-max") is None
+        assert reasoning_probe_payload("https://api.deepseek.com/v1", "deepseek-v4-pro") is None
+        assert reasoning_probe_payload("https://api.openai.com/v1", "gpt-5") is not None
+
+    def test_parse_openai_style_quoted(self) -> None:
+        from modules.llm.reasoning_payload import parse_efforts_from_error
+
+        msg = "Invalid value: 'llm'. Supported values are: 'min', 'low', 'high', 'max'."
+        assert parse_efforts_from_error(msg) == ["min", "low", "high", "max"]
+
+    def test_parse_plain_list(self) -> None:
+        from modules.llm.reasoning_payload import parse_efforts_from_error
+
+        msg = "reasoning_effort must be one of: low, medium, high"
+        assert parse_efforts_from_error(msg) == ["low", "medium", "high"]
+
+    def test_parse_normalizes_aliases(self) -> None:
+        from modules.llm.reasoning_payload import parse_efforts_from_error
+
+        msg = "Supported: 'minimal', 'low', 'maximum'"
+        assert parse_efforts_from_error(msg) == ["min", "low", "max"]
+
+    def test_parse_rejects_noise(self) -> None:
+        from modules.llm.reasoning_payload import parse_efforts_from_error
+
+        assert parse_efforts_from_error("something went 'wrong' today") is None
+        assert parse_efforts_from_error("") is None

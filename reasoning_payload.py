@@ -84,3 +84,68 @@ def reasoning_payload(base_url: str, model_id: str, effort: str | None) -> dict[
     if effort in {"low", "medium", "high"}:
         return {"reasoning_effort": effort}
     return {}
+
+
+# ── Probe шкалы через ошибку валидации ────────────────────────
+# Вендор перечисляет допустимые уровни в тексте 400 на невалидное значение.
+
+PROBE_EFFORT = "llm"
+
+_PROBE_EFFORT_MAP = {
+    "none": "none",
+    "auto": "auto",
+    "default": "default",
+    "minimal": "min",
+    "min": "min",
+    "low": "low",
+    "medium": "medium",
+    "high": "high",
+    "max": "max",
+    "maximum": "max",
+}
+_PROBE_EFFORT_OUT = {"none", "auto", "default", "min", "low", "medium", "high", "max"}
+
+
+def reasoning_probe_payload(base_url: str, model_id: str) -> dict[str, Any] | None:
+    """Chat-запрос с заведомо невалидным reasoning-значением вендора.
+
+    Ошибка валидации перечислит допустимые уровни — их вытащит parse_efforts_from_error.
+    None — параметр бинарный (qwen) или отсутствует (deepseek): шкалы нет.
+    """
+    vendor = _vendor(base_url)
+    base: dict[str, Any] = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 1,
+    }
+    if vendor == "zai":
+        return {**base, "thinking": {"type": PROBE_EFFORT}}
+    if vendor in {"qwen", "deepseek"}:
+        return None
+    if vendor == "openrouter":
+        return {**base, "reasoning": {"effort": PROBE_EFFORT}}
+    # xai / openai / generic
+    return {**base, "reasoning_effort": PROBE_EFFORT}
+
+
+def parse_efforts_from_error(message: str) -> list[str] | None:
+    """Вытащить уровни reasoning из текста ошибки валидации. None — не удалось."""
+    import re
+
+    text = (message or "").lower()
+    tokens: list[str] = re.findall(r"['\"`]([a-z_]+)['\"`]", text)
+    if not tokens:
+        m = re.search(
+            r"(?:supported values|allowed values|must be one of|expected one of|one of)"
+            r"[:\s]+([a-z0-9_,\s]+)",
+            text,
+        )
+        if m:
+            tokens = [t.strip() for t in m.group(1).split(",") if t.strip()]
+    mapped: list[str] = []
+    for token in tokens:
+        norm = _PROBE_EFFORT_MAP.get(token)
+        if norm and norm in _PROBE_EFFORT_OUT and norm not in mapped:
+            mapped.append(norm)
+    # Осмысленная шкала — минимум два уровня; иначе это шум из чужих кавычек.
+    return mapped if len(mapped) >= 2 else None
