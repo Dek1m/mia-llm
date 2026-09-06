@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-_EFFORTS = {"low", "medium", "high"}
+_EFFORTS = {"min", "low", "medium", "high", "max"}
 
 
 def _vendor(base_url: str) -> str:
@@ -60,11 +60,20 @@ def reasoning_payload(base_url: str, model_id: str, effort: str | None) -> dict[
         return {}
 
     if vendor == "xai":
-        # grok-4 думает всегда и параметр не принимает; grok-3-mini понимает low|high.
-        if model.startswith("grok-3-mini") and effort in {"low", "high"}:
-            return {"reasoning_effort": effort}
-        if model.startswith("grok-3-mini") and effort == "medium":
-            return {"reasoning_effort": "high"}
+        # grok-4.x: шкала min|low|high|max; grok-3-mini: только low|high.
+        if model.startswith("grok-4"):
+            if effort == "medium":
+                return {"reasoning_effort": "high"}
+            if effort in _EFFORTS:
+                return {"reasoning_effort": effort}
+            return {}
+        if model.startswith("grok-3-mini"):
+            if effort in {"low", "high", "max"}:
+                return {"reasoning_effort": "high" if effort == "max" else effort}
+            if effort in {"min", "medium"}:
+                return {"reasoning_effort": "low"}
+            return {}
+        # grok-4 всегда думает, параметр не принимает; прочие — молчим.
         return {}
 
     if vendor == "deepseek":
@@ -72,6 +81,6 @@ def reasoning_payload(base_url: str, model_id: str, effort: str | None) -> dict[
         return {}
 
     # OpenAI и прочие: reasoning_effort low|medium|high; 'none' — параметра нет.
-    if effort in _EFFORTS:
+    if effort in {"low", "medium", "high"}:
         return {"reasoning_effort": effort}
     return {}

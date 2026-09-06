@@ -405,9 +405,26 @@ class TestReasoningPayload:
         from modules.llm.reasoning_payload import reasoning_payload
 
         assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "low") == {"reasoning_effort": "low"}
-        assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "medium") == {"reasoning_effort": "high"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "medium") == {"reasoning_effort": "low"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "max") == {"reasoning_effort": "high"}
         assert reasoning_payload("https://api.x.ai/v1", "grok-3-mini", "none") == {}
         assert reasoning_payload("https://api.x.ai/v1", "grok-4", "high") == {}
+
+    def test_grok4_full_scale(self) -> None:
+        from modules.llm.reasoning_payload import reasoning_payload
+
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "min") == {"reasoning_effort": "min"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "low") == {"reasoning_effort": "low"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "high") == {"reasoning_effort": "high"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "max") == {"reasoning_effort": "max"}
+        # Medium у grok-4.x нет — тянем к глубокому.
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", "medium") == {"reasoning_effort": "high"}
+        assert reasoning_payload("https://api.x.ai/v1", "grok-4.6", None) == {}
+
+    def test_grok4_modes_catalog(self) -> None:
+        items = llm_provider._parse_models({"data": [{"id": "grok-4.6"}, {"id": "grok-3-mini"}]})
+        assert items[0]["reasoning_modes"] == "min,low,high,max"
+        assert items[1]["reasoning_modes"] == "low,high"
 
     def test_deepseek_no_param(self) -> None:
         from modules.llm.reasoning_payload import reasoning_payload

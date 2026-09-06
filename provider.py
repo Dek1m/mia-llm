@@ -439,9 +439,9 @@ class LLMProvider:
         client = self._openai_client(prow, token, api_model)
         # У вендоров параметр reasoning называется по-разному — payload собирает адаптер.
         effort = str(agent_row.get("reasoning_effort") or "").strip().lower()
-        if effort not in {"low", "medium", "high", "none"}:
+        if effort not in {"min", "low", "medium", "high", "max", "none"}:
             effort = str(model_row.get("reasoning_effort") or "").strip().lower()
-        if effort not in {"low", "medium", "high", "none"}:
+        if effort not in {"min", "low", "medium", "high", "max", "none"}:
             effort = "medium"
         from .reasoning_payload import reasoning_payload
 
@@ -1379,7 +1379,7 @@ class LLMProvider:
     ) -> dict[str, Any]:
         repo, _common = await self._locate_model_repo(_session_user_id, model_id)
         effort = (reasoning_effort or "medium").strip().lower()
-        if effort not in {"none", "low", "medium", "high"}:
+        if effort not in {"none", "min", "low", "medium", "high", "max"}:
             effort = "medium"
         row = await repo.set_model_reasoning(model_id, bool(reasoning_enabled), effort)
         if not row:
@@ -1750,7 +1750,7 @@ class LLMProvider:
             agent_row = await self._load_agent(agent_id, _session_user_id)
         # Разовый override режима из дока SPA: выше конфига агента, ниже гейта модели.
         effort_override = (reasoning_effort or "").strip().lower()
-        if effort_override in {"low", "medium", "high", "none"}:
+        if effort_override in {"min", "low", "medium", "high", "max", "none"}:
             agent_row["reasoning_effort"] = effort_override
         transcript = messages or self._load_transcript(workspace_id, session_id, _session_user_id)
         query = ""
@@ -2073,26 +2073,33 @@ def _context_length(extra: dict[str, Any] | None) -> int | None:
 
 
 def _reasoning_modes(model_id: str, extra: dict[str, Any] | None) -> str | None:
-    """CSV режимов reasoning. Провайдер перечисляет редко — канон low,medium,high."""
-    if not extra:
-        return "low,medium,high" if _supports_reasoning(model_id, extra) else None
-    raw = extra.get("reasoning_modes") or extra.get("reasoning_efforts")
-    if isinstance(raw, list) and raw:
-        modes = [str(item).strip().lower() for item in raw if str(item).strip()]
-        modes = [m for m in modes if m in {"low", "medium", "high", "none", "minimal"}]
-        if modes:
-            return ",".join(modes)
-    params = extra.get("supported_parameters")
-    if isinstance(params, list) and "reasoning" in [str(p).lower() for p in params]:
-        return "low,medium,high"
-    config = extra.get("reasoning_config")
-    if isinstance(config, dict):
-        if config.get("allow_reasoning") is True or isinstance(config.get("efforts"), list):
+    """CSV режимов reasoning. Провайдер перечисляет редко — канон по семействам."""
+    name = model_id.lower()
+    if extra:
+        raw = extra.get("reasoning_modes") or extra.get("reasoning_efforts")
+        if isinstance(raw, list) and raw:
+            modes = [str(item).strip().lower() for item in raw if str(item).strip()]
+            modes = [m for m in modes if m in {"min", "low", "medium", "high", "max", "none"}]
+            if modes:
+                return ",".join(modes)
+        params = extra.get("supported_parameters")
+        if isinstance(params, list) and "reasoning" in [str(p).lower() for p in params]:
             return "low,medium,high"
-    return "low,medium,high" if _supports_reasoning(model_id, extra) else None
+        config = extra.get("reasoning_config")
+        if isinstance(config, dict):
+            if config.get("allow_reasoning") is True or isinstance(config.get("efforts"), list):
+                return "low,medium,high"
+    # Шкалы вендоров: у grok-4.x четыре уровня, grok-3-mini — только low|high.
+    if "grok-4" in name:
+        return "min,low,high,max"
+    if "grok-3-mini" in name:
+        return "low,high"
+    if _supports_reasoning(model_id, extra):
+        return "low,medium,high"
+    return None
 
 
-_VALID_EFFORTS = {"low", "medium", "high", "none"}
+_VALID_EFFORTS = {"min", "low", "medium", "high", "max", "none"}
 
 
 def _clean_effort(value: Any) -> str | None:
